@@ -1,0 +1,2 @@
+# pspaQR
+Parallel spaQR
