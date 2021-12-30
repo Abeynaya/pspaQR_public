@@ -311,7 +311,6 @@ int main(int argc, char* argv[]){
 
             Index max_iters = (long)iterations;
             iter = cgls(A, b, x, t, max_iters, residual, verb);
-            // iter = lsqr(A, b, x, t, max_iters, residual, verb);
             cout << "CGLS: #iterations: " << iter << ", residual |A'(Ax-b)|/|A'(b)|: " << (A.transpose()*(A*x-b)).norm() / (A.transpose()*b).norm() << endl;
             timer cg1 = wctime();
             cout << "  CGLS: " << elapsed(cg0, cg1) << " s." << endl;

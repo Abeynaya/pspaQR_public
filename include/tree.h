@@ -26,8 +26,6 @@
 #include "toperations.h"
 #include "profile.h"
 
-
-
 typedef Eigen::SparseMatrix<double, 0, int> SpMat;
 typedef Eigen::PermutationMatrix<Eigen::Dynamic, Eigen::Dynamic> PermMat;
 
@@ -145,8 +143,6 @@ class Tree{
 
         // Least squares
         void solve_nrml(Eigen::VectorXd b, Eigen::VectorXd& x) const; // solve W^TWx = A^T b
-        void solveW(Eigen::VectorXd b, Eigen::VectorXd& x) const; // Solve Wx = b
-        void solveWt(Eigen::VectorXd b, Eigen::VectorXd& x) const; // Solve W'x = b
 
         /** Destructor */
         ~Tree();
