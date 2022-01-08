@@ -16,6 +16,19 @@ using namespace ttor;
 void ParTree::set_nthreads(int n) { this->n_threads = n; };
 void ParTree::set_verbose(int v) { this->verb = v; };
 
+/* Add an edge between c1 and c2
+ such that A(c2, c1) block is non-zero */
+Edge* ParTree::new_edgeOut(Cluster* c1, Cluster* c2){
+    Edge* e;
+
+    MatrixXd* A = new MatrixXd(c2->rows(), c1->cols());
+    A->setZero();
+    e = new Edge(c1, c2, A);
+    c1->cnbrs.insert(c2);
+    c1->add_edgeOut(e);
+    // if(c1 != c2) {c2->add_edgeIn(e);}
+    return e; 
+}
 
 void ParTree::setup_fillin(Cluster* c, Cluster* n, Taskflow<pEdge2>* add_edge_tf){
     auto found_self = find_if(c->edgesOut.begin(), c->edgesOut.end(), [&c](Edge* e){return e->n2 == c;});
@@ -58,7 +71,7 @@ void ParTree::alloc_fillin(Cluster* n, Taskflow<pEdge2>* add_edge_tf){
 }
 
 /* Update Q^T A after householder on interiors */
-int ParTree::update_cluster(Cluster* c, Cluster* n){
+int ParTree::update_cluster(Cluster* c, Cluster* n, Taskflow<Edge*>* tf){
     // Concatenate the blocks to get Q
     vector<MatrixXd*> H;
     int num_rows=0;
@@ -78,16 +91,28 @@ int ParTree::update_cluster(Cluster* c, Cluster* n){
 
     for (auto edge: c->edgesOut){
         Edge* ecn;
-        if (edge->A21 != nullptr){// Only the cnbrs + c itself
-            Cluster* nbr_c = edge->n2; 
-            auto found_out = find_if(n->edgesOut.begin(), n->edgesOut.end(), [&nbr_c](Edge* e){return (e->n2 == nbr_c );});
-            assert(found_out != n->edgesOut.end());
-            ecn = *(found_out);
-            assert(ecn->A21 != nullptr);
-            N.push_back(ecn->A21);
-            V.middleRows(curr_row, ecn->A21->rows()) = *ecn->A21; 
-            curr_row += ecn->A21->rows();    
+        assert (edge->A21 != nullptr); // Only the cnbrs + c itself
+        
+        Cluster* nbr_c = edge->n2; 
+        auto found_out = find_if(n->edgesOut.begin(), n->edgesOut.end(), [&nbr_c](Edge* e){return (e->n2 == nbr_c );});
+
+        // Fill-in => Allocate memory first
+        if (found_out == n->edgesOut.end()){
+            ecn = new_edgeOut(n, nbr_c);
+            if (n != nbr_c) {
+                // insert in edgeIn
+                tf->fulfill_promise(ecn);
+            }
         }
+        else {
+            ecn = *(found_out);
+        }
+        
+        assert(ecn->A21 != nullptr);
+        N.push_back(ecn->A21);
+        V.middleRows(curr_row, ecn->A21->rows()) = *ecn->A21; 
+        curr_row += ecn->A21->rows();  
+        
     }
 
     // Compute V = Q^T V
@@ -207,8 +232,8 @@ int ParTree::factorize(){
             // Threadpool
             Threadpool_shared tp(this->n_threads, verb, "elmn_");
             Taskflow<Cluster*> elmn_house_tf(&tp, verb);
-            Taskflow<Cluster*> alloc_fillin_tf(&tp, verb);
-            Taskflow<pEdge2> addEdgeOut_tf(&tp, verb);
+            Taskflow<Edge*> addEdgeIn_tf(&tp, verb);
+
             Taskflow<pCluster2> elmn_applyQ_tf(&tp, verb);
 
 
@@ -234,60 +259,15 @@ int ParTree::factorize(){
                     return 7;
                 });
 
-            alloc_fillin_tf.set_mapping([&] (Cluster* n){
-                    return n->get_order()%ttor_threads; 
-                })
-                .set_indegree([](Cluster*){
-                    return 1;
-                })
-                .set_task([&] (Cluster* n) {
-                    this->alloc_fillin(n, &addEdgeOut_tf);
-                })
-                .set_name([](Cluster* c) {
-                    return "alloc_fillin_" + to_string(c->get_order());
-                })
-                .set_priority([&](Cluster*) {
-                    return 6;
-                });
-
-            addEdgeOut_tf.set_mapping([&] (pEdge2 ee){
-                    return ee[1]->n1->get_order()%ttor_threads; // Mapping matters to avoid race conditions -- IMPORTANT
-                })
-                .set_binding([] (pEdge2) {
-                    return true;
-                })
-                .set_indegree([](pEdge2){
-                    return 1;
-                })
-                .set_task([&] (pEdge2 ee) { // Will work because of binding set to true
-                    Edge* e = ee[1]; // Edge between row_nbr to col_nbr
-                    Cluster* c1 = e->n1;
-                    Cluster* c2 = e->n2;
-                    auto found = find_if(c1->edgesOut.begin(), c1->edgesOut.end(), [&c2](Edge* out_edge){return out_edge->n2 == c2;});
-                    if (found == c1->edgesOut.end()){
-                        c1->cnbrs.insert(c2);
-                        c1->add_edgeOut(e);
-                    }
-                })
-                .set_fulfill([&] (pEdge2 ee){
-                    elmn_applyQ_tf.fulfill_promise({ee[0]->n1, ee[1]->n1});
-                })
-                .set_name([](pEdge2 ee) {
-                    return "addEdgeOut_" + to_string(ee[1]->n1->get_order())+"_"+to_string(ee[1]->n2->get_order());
-                })
-                .set_priority([&](pEdge2 ) {
-                    return 6;
-                });
-
             elmn_applyQ_tf.set_mapping([&] (pCluster2 cn){
                     return cn[1]->get_order()%ttor_threads; // Important to avoid race conditions 
                 })
                 .set_indegree([](pCluster2 cn){
-                    return cn[0]->edgesOut.size() + 1;  // Memory alloc + Householder on c
+                    return 1;  // Householder on c
                 })
                 .set_task([&] (pCluster2 cn) {
                     if (verb) cout << cn[0]->get_id() << " " << cn[1]->get_id() << endl;
-                    update_cluster(cn[0], cn[1]);
+                    update_cluster(cn[0], cn[1], &addEdgeIn_tf);
                 })
                 .set_binding([] (pCluster2) {
                     return true;
@@ -299,14 +279,35 @@ int ParTree::factorize(){
                     return 6;
                 });
 
+            addEdgeIn_tf.set_mapping([&] (Edge* e){
+                    return e->n2->get_order()%ttor_threads; // Mapping matters to avoid race conditions -- IMPORTANT
+                })
+                .set_binding([] (Edge*) {
+                    return true;
+                })
+                .set_indegree([](Edge*){
+                    return 1;
+                })
+                .set_task([&] (Edge* e) { // Will work because of binding set to true
+                    Cluster* c1 = e->n1;
+                    Cluster* c2 = e->n2;
+                    auto found = find_if(c2->edgesIn.begin(), c2->edgesIn.end(), [&c1](Edge* in_edge){return in_edge->n1 == c1;});
+                    if (found == c2->edgesIn.end()){
+                        c2->add_edgeIn(e);
+                    }
+                })
+                .set_name([](Edge* e) {
+                    return "addEdgeIn_" + to_string(e->n1->get_order())+"_"+to_string(e->n2->get_order());
+                })
+                .set_priority([&](Edge* ) {
+                    return 6;
+                });
+
             // Get rsparsity for the clusters to be eliminated next
             estart = systime();
             {
                 for (auto self: this->interiors_current()){ 
                     elmn_house_tf.fulfill_promise(self);
-                }
-                for (auto self: this->bottom_current()){ 
-                    alloc_fillin_tf.fulfill_promise(self);
                 }
             }
             tp.join();

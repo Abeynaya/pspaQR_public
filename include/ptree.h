@@ -47,10 +47,12 @@ public:
 
 	ParTree(int nlevels_, int skip_) : Tree(nlevels_, skip_) {n_threads=1;};
 
+	// Add new edge 
+	Edge* new_edgeOut(Cluster*, Cluster*);
 	// Methods needed for elimination
 	void setup_fillin(Cluster*, Cluster*, ttor::Taskflow<pEdge2>*);
 	void alloc_fillin(Cluster*, ttor::Taskflow<pEdge2>*);
-	int update_cluster(Cluster*, Cluster*);
+	int update_cluster(Cluster*, Cluster*, ttor::Taskflow<Edge*>*);
 	int house(Cluster*);
 
 	int factorize();
