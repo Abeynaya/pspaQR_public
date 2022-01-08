@@ -7,6 +7,8 @@
 #include <Eigen/IterativeLinearSolvers>
 #include "util.h"
 #include "tree.h"
+#include "ptree.h"
+
 // #include "lsqr.h"
 
 template<typename MatrixType, typename Rhs, typename Dest, typename Preconditioner>

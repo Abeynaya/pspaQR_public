@@ -12,6 +12,7 @@
 #include "mmio.hpp"
 #include "cxxopts.hpp"
 #include "tree.h"
+#include "ptree.h"
 #include "partition.h"
 #include "util.h"
 #include "is.h"
@@ -44,7 +45,9 @@ int main(int argc, char* argv[]){
         ("i,iterations","Iterative solver iterations", cxxopts::value<int>()->default_value("300"))
         ("rhs", "Provide RHS to solve in matrix market format", cxxopts::value<string>())
         ("res", "Desired relative residual for the iterative solver. Default 1e-12", cxxopts::value<double>()->default_value("1e-12")) 
-
+        // Detail
+        ("n_threads", "Number of threads", cxxopts::value<int>()->default_value("1"))
+        ("verb", "Verbose printing for ttor debugging. Default 0. Takes 1,2,3", cxxopts::value<int>()->default_value("0"))
         // Use solvers from Eigen library
         ("useEigenLSCG","If true, run CGLS scheme with standard diagonal preconditioner from Eigen library. Default false.", cxxopts::value<int>()->default_value("0"))
         ("useEigenQR","If true, run SparseQR with default ordering from Eigen library. Default false.", cxxopts::value<int>()->default_value("0"))
@@ -131,7 +134,7 @@ int main(int argc, char* argv[]){
     VectorXd Dentries(A.cols());
     DiagonalMatrix<double, Eigen::Dynamic> D(A.cols());
 
-    auto pstart = wctime();
+    auto pstart = systime();
     for (int i=0; i < A.cols(); ++i) {
         double sum = 0;
        for (SpMat::InnerIterator it(A,i); it; ++it){
@@ -142,7 +145,7 @@ int main(int argc, char* argv[]){
 
     D = Dentries.asDiagonal();
     A = A*D*10;
-    auto pend = wctime();
+    auto pend = systime();
     cout << "Pre-process time: " << elapsed(pstart, pend) << endl;
     
 
@@ -165,13 +168,16 @@ int main(int argc, char* argv[]){
         }
     }
 
-
+    int n_threads = result["n_threads"].as<int>();
+    int verbose = result["verb"].as<int>();
     // Tree
-    Tree t(nlevels, skip);
+    ParTree t(nlevels, skip);
     t.set_scale(scale);
     t.set_tol(tol);
     t.set_order(order);
     t.set_hsl(hsl);
+    t.set_nthreads(n_threads);
+    t.set_verbose(verbose);
 
 
     if (nrows == ncols) t.set_square(1); // default 0
@@ -186,9 +192,9 @@ int main(int argc, char* argv[]){
 
         LeastSquareDiagonalPreconditioner<double> diag_precond = lscg.preconditioner();
 
-        timer cgls0 = wctime();
+        timer cgls0 = systime();
         auto iter = lscg_eigen(A, b, x, diag_precond, iterations, residual, true);
-        timer cgls1 = wctime();
+        timer cgls1 = systime();
 
         cout << "CGLS error: " << scientific <<  (A.transpose()*(A*x-b)).norm() / (A.transpose()*b).norm() << endl;
         cout << "  CGLS: " << elapsed(cgls0, cgls1) << " s." << endl;
@@ -205,14 +211,14 @@ int main(int argc, char* argv[]){
 
         eigenQR.setPivotThreshold(1e-14);
         cout << "\n <<<< Using Eigen SparseQR routine..." << endl;
-        timer qr0 = wctime();
+        timer qr0 = systime();
         eigenQR.compute(A);
-        timer qr1 = wctime();
+        timer qr1 = systime();
         cout << "Time to factorize: " << elapsed(qr0, qr1) << " s." << endl;
 
-        timer qrs0 = wctime();
+        timer qrs0 = systime();
         x = eigenQR.solve(b);
-        timer qrs1 = wctime();
+        timer qrs1 = systime();
         cout << "Time to solve: " << elapsed(qrs0, qrs1) << " s." << endl;
         cout << "Error: " << scientific << (A.transpose()*(A*x-b)).norm() / (A.transpose()*b).norm() << endl; 
         
@@ -230,14 +236,14 @@ int main(int argc, char* argv[]){
         SimplicialLLT<SpMat, Lower, AMDOrdering<int> > eigenCholesky;
         cout << "\n <<<< Using Eigen's SimplicalLL^T routine..." << endl;
 
-        timer qr0 = wctime();
+        timer qr0 = systime();
         eigenCholesky.compute(AtA);
-        timer qr1 = wctime();
+        timer qr1 = systime();
         cout << "Time to factorize: " << elapsed(qr0, qr1) << " s." << endl;
 
-        timer qrs0 = wctime();
+        timer qrs0 = systime();
         x = eigenCholesky.solve(Atb);
-        timer qrs1 = wctime();
+        timer qrs1 = systime();
 
         cout << "Time to solve: " << elapsed(qrs0, qrs1) << " s." << endl;
         cout << "Error: " << scientific << (A.transpose()*(A*x-b)).norm() / (A.transpose()*b).norm() << endl; 
@@ -253,9 +259,9 @@ int main(int argc, char* argv[]){
     // Factorize
     int err = t.factorize();
 
-
+    
     if (!err)
-    // Run one solve
+    // // Run one solve
     {
          // Random b
         {
@@ -263,18 +269,18 @@ int main(int argc, char* argv[]){
             VectorXd bcopy = b;
             VectorXd x(ncols, 1);
             x.setZero();
-            timer tsolv_0 = wctime();
+            timer tsolv_0 = systime();
 
             if (nrows == ncols){
                 t.solve(bcopy, x);
-                timer tsolv = wctime();
+                timer tsolv = systime();
                 cout << "<<<<tsolv=" << elapsed(tsolv_0, tsolv) << endl;
                 cout << "One-time solve (Random b):" << endl;             
                 cout << "<<<<|(Ax-b)|/|b| : " << scientific <<  ((A*x-b)).norm() / (b).norm() << endl;
             }
             else {
                 t.solve_nrml(A.transpose()*bcopy, x);
-                timer tsolv = wctime();
+                timer tsolv = systime();
                 cout << "<<<<tsolv=" << elapsed(tsolv_0, tsolv) << endl;
                 cout << "One-time solve (Random b):" << endl;             
                 cout << "<<<<|A'(Ax-b)|/|A'b| : " << scientific <<  (A.transpose()*(A*x-b)).norm() / (A.transpose()*b).norm() << endl;
@@ -282,41 +288,42 @@ int main(int argc, char* argv[]){
         }
     }
 
-    bool verb = true; 
-    int iter = 0;
-    if (!err)
-    {
-        VectorXd x = VectorXd::Zero(ncols);
-        VectorXd b;
-        if ((!result.count("rhs"))){
-            b = random(nrows,2021);
-        }
-        else {
-            string rhs_file = result["rhs"].as<string>();
-            b = mmio::vector_mmread<double>(rhs_file);
-        }
-        VectorXd bcopy = b;
+    // bool verb = true; 
+    // int iter = 0;
+    // if (!err)
+    // {
+    //     VectorXd x = VectorXd::Zero(ncols);
+    //     VectorXd b;
+    //     if ((!result.count("rhs"))){
+    //         b = random(nrows,2021);
+    //     }
+    //     else {
+    //         string rhs_file = result["rhs"].as<string>();
+    //         b = mmio::vector_mmread<double>(rhs_file);
+    //     }
+    //     VectorXd bcopy = b;
 
     
-        if(useGMRES) {
-            timer gmres0 = wctime();
-            iter = gmres(A, b, x, t, iterations, iterations, residual, verb);
-            timer gmres1 = wctime();
-            cout << "GMRES: #iterations: " << iter << ", residual |Ax-b|/|b|: " << (A*x-b).norm() / b.norm() << endl;
-            cout << "  GMRES: " << elapsed(gmres0, gmres1) << " s." << endl;
-            cout << "<<<<GMRES=" << iter << endl;
-        }
-        else if(useCGLS){
-            timer cg0 = wctime();
+    //     if(useGMRES) {
+    //         timer gmres0 = systime();
+    //         iter = gmres(A, b, x, t, iterations, iterations, residual, verb);
+    //         timer gmres1 = systime();
+    //         cout << "GMRES: #iterations: " << iter << ", residual |Ax-b|/|b|: " << (A*x-b).norm() / b.norm() << endl;
+    //         cout << "  GMRES: " << elapsed(gmres0, gmres1) << " s." << endl;
+    //         cout << "<<<<GMRES=" << iter << endl;
+    //     }
+    //     else if(useCGLS){
+    //         timer cg0 = systime();
 
-            Index max_iters = (long)iterations;
-            iter = cgls(A, b, x, t, max_iters, residual, verb);
-            cout << "CGLS: #iterations: " << iter << ", residual |A'(Ax-b)|/|A'(b)|: " << (A.transpose()*(A*x-b)).norm() / (A.transpose()*b).norm() << endl;
-            timer cg1 = wctime();
-            cout << "  CGLS: " << elapsed(cg0, cg1) << " s." << endl;
-            cout << "<<<<CGLS=" << iter << endl;
-        }
-    }
+    //         Index max_iters = (long)iterations;
+    //         iter = cgls(A, b, x, t, max_iters, residual, verb);
+    //         cout << "CGLS: #iterations: " << iter << ", residual |A'(Ax-b)|/|A'(b)|: " << (A.transpose()*(A*x-b)).norm() / (A.transpose()*b).norm() << endl;
+    //         timer cg1 = systime();
+    //         cout << "  CGLS: " << elapsed(cg0, cg1) << " s." << endl;
+    //         cout << "<<<<CGLS=" << iter << endl;
+    //     }
+    // }
+    
 
   return 0;  
 }

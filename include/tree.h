@@ -32,7 +32,7 @@ typedef Eigen::PermutationMatrix<Eigen::Dynamic, Eigen::Dynamic> PermMat;
 
 // Tree
 class Tree{
-    private: 
+    protected: 
         int ilvl;  // Level [0,...ilvl] have been eliminated; -1 nothing eliminated
         int nlevels; 
         int nrows; // rows in matrix
@@ -53,11 +53,12 @@ class Tree{
 
         // Stores the clusters at each level of the cluster hierarchy
         std::vector<std::list<Cluster*>> bottoms; // bottoms.size() = nlevels
+        std::vector<std::list<Cluster*>> interiors; //interiors.size() = nlevels
+        std::vector<std::list<Cluster*>> interfaces; // interfaces.size() = nlevels
         std::vector<std::list<Cluster*>> fine; // list of fine nodes
 
         int current_bottom;
-        const std::list<Cluster*>& bottom_current() const {return bottoms[current_bottom];};
-        const std::list<Cluster*>& bottom_original() const {return bottoms[0];};
+        
         
         /* Store the operations */
         std::vector<Operation*> ops;
@@ -107,11 +108,12 @@ class Tree{
         
 
     public: 
-        // EIGEN_MAKE_ALIGNED_OPERATOR_NEW
         Tree(int lvls, int skip_): ilvl(-1), nlevels(lvls), nrows(0), ncols(0), tol(0), 
                         use_matching(0), skip(skip_), scale(0), square(0), max_order(0), order(1),
                          current_bottom(0), nnzA(0), nnzR(0), nnzH(0), nnzQ(0) {
                             bottoms = std::vector<std::list<Cluster*>>(nlevels);
+                            interiors = std::vector<std::list<Cluster*>>(nlevels);
+                            interfaces = std::vector<std::list<Cluster*>>(nlevels);
                             fine = std::vector<std::list<Cluster*>>(nlevels);
                             Xcoo = nullptr;
                             profile = Profile(lvls, skip_);
@@ -127,6 +129,10 @@ class Tree{
         void set_square(int s);
         void set_order(float s);
         
+        const std::list<Cluster*>& bottom_current() const {return bottoms[current_bottom];};
+        const std::list<Cluster*>& interiors_current() const {return interiors[current_bottom];};
+        const std::list<Cluster*>& interfaces_current() const {return interfaces[current_bottom];};
+        const std::list<Cluster*>& bottom_original() const {return bottoms[0];};
 
         // Get access to basic info
         int rows() const;

@@ -56,7 +56,7 @@ void initPermutation(int nlevels, const vector<ClusterID>& cmap, VectorXi& cperm
 
 void form_rmap(SpMat& A, vector<ClusterID>& rmap, const vector<ClusterID>& cmap, VectorXi& cperm){
     // cmap is actually cpermed
-    auto t0 = wctime();
+    auto t0 = systime();
     int r = A.rows();
     SpMat At = col_perm(A, cperm).transpose();
 
@@ -593,7 +593,7 @@ bool Tree::want_sparsify(Cluster* c){
 /* ************************************* */
 /* Main functions */
 void Tree::partition(SpMat& A){
-    auto t0 = wctime();
+    auto t0 = systime();
     int r = A.rows();
     int c = A.cols();
     this->nrows = r; 
@@ -673,6 +673,12 @@ void Tree::partition(SpMat& A){
         assert(nr2c != 0);
         Cluster* self = new Cluster(k, knext-k, l, nr2c, cid, get_new_order());
         this->bottoms[0].push_back(self);
+        if (cid.level()==0) {
+            interiors[0].push_back(self);
+        }
+        else {
+            interfaces[0].push_back(self);
+        }
 
         k = knext; 
         l += nr2c;
@@ -715,15 +721,21 @@ void Tree::partition(SpMat& A){
             }
 
             bottoms[lvl].push_back(parent);
+            if (idparent.level()== lvl) {
+                interiors[lvl].push_back(parent);
+            }
+            else {
+                interfaces[lvl].push_back(parent);
+            }
         }
     }
-    auto t1 = wctime();
+    auto t1 = systime();
     cout << "Time to partition: " << elapsed(t0, t1) << endl;
 
 }
 
 void Tree::assemble(SpMat& A){
-    auto astart = wctime();
+    auto astart = systime();
     int r = A.rows();
     int c = A.cols();
     this->nnzA = A.nonZeros();
@@ -771,11 +783,12 @@ void Tree::assemble(SpMat& A){
         self->sort_edgesOut();
         self->cnbrs = cnbrs;
     }
-    auto aend = wctime();
+    auto aend = systime();
     cout << "Time to assemble: " << elapsed(astart, aend)  << endl;
     cout << "Aspect ratio of top separator: " << (double)get<0>(topsize())/(double)get<1>(topsize()) << endl;
     
 }
+
 
 int Tree::eliminate_cluster(Cluster* c){
     if (c->cols()==0){
@@ -840,31 +853,30 @@ void Tree::get_sparsity(Cluster* c){
         col_sparsity.insert(edge->n2->get_sepID());
     }
     bool geo = (this->Xcoo != nullptr);
-
     double eps = 1e-14;
 
     for (auto edge: c->edgesOut){
-        if (edge->A21 != nullptr){
-            Cluster* n = edge->n2;
-            row_sparsity.insert(n);
-            for (auto ein: n->edgesIn){
-                if (ein->A21 != nullptr && ein->n1 != c && !ein->n1->is_eliminated()){
-                    Cluster* nin = ein->n1;
+        assert(edge->A21 != nullptr); 
+        Cluster* n = edge->n2;
+        if (n!= c) row_sparsity.insert(n);
+        for (auto ein: n->edgesIn){
+            if (ein->n1 != c && !ein->n1->is_eliminated()){
+                assert(ein->A21 != nullptr);
 
-                    bool valid = true;
-                    
-                    valid = check_if_valid(c->get_id(), nin->get_id(), col_sparsity);
-                    if (!geo && valid && 
-                        !(nin->get_id().l == c->get_sepID() || nin->get_id().r == c->get_sepID()) ) {
-                        valid = ((*(edge->A21)).transpose()*(*(ein->A21))).norm() > eps;                                    
-                    }
-                    
-                    if (valid) {
-                        row_sparsity.insert(nin);
-                    }
+                Cluster* nin = ein->n1;
+                bool valid = true;
+                
+                valid = check_if_valid(c->get_id(), nin->get_id(), col_sparsity);
+                if (!geo && valid && 
+                    !(nin->get_id().l == c->get_sepID() || nin->get_id().r == c->get_sepID()) ) {
+                    valid = ((*(edge->A21)).transpose()*(*(ein->A21))).norm() > eps;                                    
                 }
-            }        
-        }
+                
+                if (valid) {
+                    row_sparsity.insert(nin);
+                }
+            }
+        }        
     }
     c->rsparsity = row_sparsity; 
 }
@@ -1307,10 +1319,10 @@ void Tree::sparsify_extra(Cluster* c){
 }
 
 int Tree::factorize(){
-    auto fstart = wctime();
+    auto fstart = systime();
     for (this->ilvl=0; this->ilvl < nlevels; ++ilvl){
         // Get rsparsity for the clusters to be eliminated next
-        auto vstart = wctime();
+        auto vstart = systime();
         {
             for (auto self: this->bottom_current()){
                 if (self->get_level() == this->ilvl){
@@ -1318,27 +1330,27 @@ int Tree::factorize(){
                 }
             }
         }
-        auto vend = wctime();
+        auto vend = systime();
 
-        auto estart = wctime();
+        auto estart = systime();
         // Eliminate
         {      
             for (auto self: this->bottom_current()){
                 if (self->get_level() == this->ilvl){
                     assert(self->is_eliminated() == false);
-                    auto elmn0 = wctime();
+                    auto elmn0 = systime();
                     this->eliminate_cluster(self);
-                    auto elmn1 = wctime();
+                    auto elmn1 = systime();
                     this->profile.time_elmn[this->ilvl][self->get_sepID().sep] += (elapsed(elmn0,elmn1));
                 }
             }
 
         }
-        auto eend = wctime();
+        auto eend = systime();
         
 
         // Shift rows
-        auto shstart = wctime();
+        auto shstart = systime();
         {
             // Move extra rows to additional clusters before sparsification/merging process begins
             if (this->ilvl < nlevels-1){
@@ -1350,27 +1362,27 @@ int Tree::factorize(){
                 }
             }
         }
-        auto shend = wctime();
+        auto shend = systime();
 
         // Scale
-        auto scstart = wctime();
+        auto scstart = systime();
         {
             if (this->scale && this->ilvl < nlevels -2  && this->ilvl >= skip && this->tol != 0  ){ //&& ((this->ilvl-skip)%2 == 0)
 
                 for (auto self: this->bottom_current()){
                     if (want_sparsify(self)){
-                        auto scale0 = wctime();
+                        auto scale0 = systime();
                         do_scaling(self);
-                        auto scale1 = wctime();
+                        auto scale1 = systime();
                         this->profile.time_scale[this->ilvl-skip][nlevels - self->get_sepID().lvl-1].push_back(elapsed(scale0,scale1));
                     }
                 }
             }
         }
-        auto scend = wctime();
+        auto scend = systime();
 
         // Sparsify
-        auto spstart = wctime();
+        auto spstart = systime();
         {
             if (this->ilvl >= skip && this->ilvl < nlevels -2  && this->tol != 0){ 
                 for (auto self: this->bottom_current()){
@@ -1386,7 +1398,7 @@ int Tree::factorize(){
                     if (want_sparsify(self) ){
                         this->profile.rank_before[this->ilvl-skip][nlevels - self->get_sepID().lvl-1].push_back(self->cols());
 
-                        auto spars0 = wctime();
+                        auto spars0 = systime();
                         if (scale){
                             if (this->order == 1.5) sparsifyD_imp(self);
                             else sparsifyD(self); 
@@ -1395,23 +1407,23 @@ int Tree::factorize(){
                             sparsify(self);
                         }
                         
-                        auto spars1 = wctime();
+                        auto spars1 = systime();
                         this->profile.time_spars[this->ilvl-skip][nlevels - self->get_sepID().lvl-1].push_back(elapsed(spars0,spars1));
                         this->profile.rank_after[this->ilvl-skip][nlevels - self->get_sepID().lvl-1].push_back(self->cols());
                     } 
                 }
             }
         }
-        auto spend = wctime();
+        auto spend = systime();
 
         // Merge 
-        auto mstart = wctime();
+        auto mstart = systime();
         {   
             if (this-> ilvl < nlevels-1){
                 merge_all();
             }
         }
-        auto mend = wctime();
+        auto mend = systime();
         
 
         cout << "lvl: " << ilvl << "    " ;  
@@ -1426,7 +1438,7 @@ int Tree::factorize(){
              << "a.r top_sep: " << (double)get<0>(topsize())/(double)get<1>(topsize()) << endl;
 
     }   
-    auto fend = wctime();
+    auto fend = systime();
     cout << "Tolerance set: " << scientific << this->tol << endl;
     cout << "Time to factorize:  " << elapsed(fstart,fend) << endl;
     cout << "Size of top separator: " <<  (*this->bottoms[nlevels-1].begin())->cols() << endl;

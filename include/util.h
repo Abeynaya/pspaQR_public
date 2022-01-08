@@ -33,7 +33,7 @@ bool isperm(Eigen::VectorXi* perm);
 SpMat symmetric_graph(SpMat& A);
 
 typedef timeval timer;
-timer wctime();
+timer systime();
 
 /* Concatenate the matrices vertically in the vector H */
 void concatenate(std::vector<Eigen::MatrixXd*> H, Eigen::MatrixXd* V);

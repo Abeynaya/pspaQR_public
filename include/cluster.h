@@ -89,6 +89,8 @@ struct ClusterID {
             this->section = section;
         }
 
+        int level() const {return self.lvl;};
+
         // Some lexicographics order
         // NOT the matrix ordering
         bool operator==(const ClusterID& other) const {

@@ -65,7 +65,7 @@ double elapsed(timeval& start, timeval& end) {
     return (end.tv_sec + end.tv_usec * 1e-6) - (start.tv_sec + start.tv_usec * 1e-6);
 }
 
-timer wctime() {
+timer systime() {
     struct timeval time;
     gettimeofday(&time, NULL);
     return time;
@@ -624,26 +624,26 @@ void random_rrqr(const MatrixXd* A, MatrixXd* v, VectorXd* h,  double tol, std::
 
     // Intial Q
     int initial_step = max(r,static_cast<int>(0.4 * rows));
-    // timer t_rand = wctime();
+    // timer t_rand = systime();
     initial_step = min(rows,initial_step);
     MatrixXd W = gen_gaussian(cols,initial_step); 
-    timer t_gemm = wctime();
+    timer t_gemm = systime();
     Q_all.noalias() = (*A) * W; // With EIGEN using Blas & Lapack this should be fine
-    // timer t_qr = wctime();
+    // timer t_qr = systime();
     // Q_all = MatrixXd(A->rows(), W.cols());
     // gemm(A, &W, &Q_all, CblasNoTrans, CblasNoTrans, 1.0, 0.0);
     VectorXd h_tmp = VectorXd::Zero(initial_step);
     geqrf(&Q_all, &h_tmp);
     orgqr(&Q_all, &h_tmp);
-    // timer t_end = wctime();  
+    // timer t_end = systime();  
     int rank = Q_all.cols();
     assert(rank <= rows);
     while (rank < rows) {
-        // timer t_rand = wctime();
+        // timer t_rand = systime();
         int actual_step = min(step, rows - rank);
         assert(actual_step >= 1);
         MatrixXd W = gen_gaussian(cols,actual_step);
-        // timer t_gemm = wctime();
+        // timer t_gemm = systime();
         MatrixXd AW = (*A) * W; 
         AW -= Q_all * (Q_all.transpose() * AW); // FIXME: is this stable ? Cf Gramm-Schmidt
         // With EIGEN using Blas & Lapack this should be fine
@@ -652,7 +652,7 @@ void random_rrqr(const MatrixXd* A, MatrixXd* v, VectorXd* h,  double tol, std::
         // gemm(A,      &W,      &AW,   CblasNoTrans, CblasNoTrans,  1.0, 0.0);
         // gemm(&Q_all, &AW,     &QTAW, CblasTrans,   CblasNoTrans,  1.0, 0.0);
         // gemm(&Q_all, &QTAW,   &AW,   CblasNoTrans, CblasNoTrans, -1.0, 1.0);
-        // timer t_qr = wctime();
+        // timer t_qr = systime();
         assert(AW.size() > 0); // Minimum 1 col & 1 row
         double norm = AW.colwise().norm().maxCoeff();
         // cout << "norm " << norm << endl;
@@ -669,7 +669,7 @@ void random_rrqr(const MatrixXd* A, MatrixXd* v, VectorXd* h,  double tol, std::
         Q_all = Q_tmp;
         rank = new_rank;
         assert(rank == Q_all.cols());
-        // timer t_end = wctime();
+        // timer t_end = systime();
     } 
     assert(Q_all.cols() == rank);
     assert(Q_all.cols() <= rows);

@@ -15,15 +15,15 @@ int cg(const MatrixType& mat, const Rhs& rhs, Dest& x, const Preconditioner& pre
     
     double t_matvec = 0.0;
     double t_preco  = 0.0;
-    timer start     = wctime();
+    timer start     = systime();
     
     int maxIters = iters;
     
     int n = mat.cols();
 
-    timer t00 = wctime();
+    timer t00 = systime();
     VectorType residual = rhs - mat * x; // r_0 = b - A x_0
-    timer t01 = wctime();
+    timer t01 = systime();
     t_matvec += elapsed(t00, t01);
 
     double rhsNorm2 = rhs.squaredNorm();
@@ -43,9 +43,9 @@ int cg(const MatrixType& mat, const Rhs& rhs, Dest& x, const Preconditioner& pre
    
     VectorType p(n);
     p = residual;
-    timer t02 = wctime();
+    timer t02 = systime();
     precond.solve(p,p);      // p_0 = M^-1 r_0
-    timer t03 = wctime();
+    timer t03 = systime();
     t_preco += elapsed(t02, t03);
 
     VectorType z(n), tmp(n);
@@ -53,9 +53,9 @@ int cg(const MatrixType& mat, const Rhs& rhs, Dest& x, const Preconditioner& pre
     int i = 0;
     while(i < maxIters)
     {
-        timer t0 = wctime();
+        timer t0 = systime();
         tmp.noalias() = mat * p;                    // the bottleneck of the algorithm
-        timer t1 = wctime();
+        timer t1 = systime();
         t_matvec += elapsed(t0, t1);
 
         double alpha = absNew / p.dot(tmp);         // the amount we travel on dir
@@ -70,9 +70,9 @@ int cg(const MatrixType& mat, const Rhs& rhs, Dest& x, const Preconditioner& pre
         }
      
         z = residual; 
-        timer t2 = wctime();
+        timer t2 = systime();
         precond.solve(z,z);                           // approximately solve for "A z = residual"
-        timer t3 = wctime();
+        timer t3 = systime();
         t_preco += elapsed(t2, t3);
         double absOld = absNew;
         absNew = residual.dot(z);                   // update the absolute value of r
@@ -82,7 +82,7 @@ int cg(const MatrixType& mat, const Rhs& rhs, Dest& x, const Preconditioner& pre
     }
     iters = i+1;
     if(verb) {
-        timer stop = wctime();
+        timer stop = systime();
         printf("# of iter:  %d\n", iters);
         printf("Total time: %3.2e s.\n", elapsed(start, stop));
         printf("  Matvec:   %3.2e s.\n", t_matvec);
@@ -93,7 +93,7 @@ int cg(const MatrixType& mat, const Rhs& rhs, Dest& x, const Preconditioner& pre
 
 template<typename MatrixType, typename Rhs, typename Dest, typename Preconditioner>
 int gmres(const MatrixType& mat, const Rhs& rhs, Dest& x, const Preconditioner& precond, int iters, int restart, double tol_error, bool verb) {
-    timer start     = wctime();
+    timer start     = systime();
     double t_matvec = 0.0;
     double t_preco  = 0.0;
 
@@ -121,13 +121,13 @@ int gmres(const MatrixType& mat, const Rhs& rhs, Dest& x, const Preconditioner& 
     const int m = mat.rows();
 
     // residual and preconditioned residual
-    timer t0 = wctime();    
+    timer t0 = systime();    
     VectorType p0 = rhs - mat*x;
-    timer t1 = wctime();
+    timer t1 = systime();
     t_matvec += elapsed(t0, t1);
     VectorType r0 = p0;
     precond.solve(r0, r0);
-    timer t2 = wctime();
+    timer t2 = systime();
     t_preco += elapsed(t1, t2);
 
     const RealScalar r0Norm = r0.norm();
@@ -168,13 +168,13 @@ int gmres(const MatrixType& mat, const Rhs& rhs, Dest& x, const Preconditioner& 
         }
 
         // apply matrix M to v:  v = mat * v;
-        timer t0 = wctime();
+        timer t0 = systime();
         t.noalias() = mat * v;
-        timer t1 = wctime();
+        timer t1 = systime();
         t_matvec += elapsed(t0, t1);
         v = t;
         precond.solve(v, v);
-        timer t2 = wctime();
+        timer t2 = systime();
         t_preco += elapsed(t1, t2);
 
         // apply Householder reflections H_{k-1} ... H_{1} to v
@@ -236,7 +236,7 @@ int gmres(const MatrixType& mat, const Rhs& rhs, Dest& x, const Preconditioner& 
             if(stop) {
                 printf("GMRES converged!\n");
                 if(verb) {
-                    timer stop = wctime();
+                    timer stop = systime();
                     printf("# of iter:  %d\n", iters);
                     printf("Total time: %3.2e s.\n", elapsed(start, stop));
                     printf("  Matvec:   %3.2e s.\n", t_matvec);
@@ -247,13 +247,13 @@ int gmres(const MatrixType& mat, const Rhs& rhs, Dest& x, const Preconditioner& 
                 k=0;
 
                 // reset data for restart
-                timer t0 = wctime();
+                timer t0 = systime();
                 p0.noalias() = rhs - mat*x;
-                timer t1 = wctime();
+                timer t1 = systime();
                 t_matvec += elapsed(t0, t1);                
                 r0 = p0;
                 precond.solve(r0, r0);
-                timer t2 = wctime();
+                timer t2 = systime();
                 t_preco += elapsed(t1, t2);
 
                 // clear Hessenberg matrix and Householder data
@@ -354,7 +354,7 @@ int lscg_eigen(const MatrixType& mat, const Rhs& rhs, Dest& x, const Preconditio
     
     double t_matvec = 0.0;
     double t_preco  = 0.0;
-    timer start     = wctime();
+    timer start     = systime();
     
     int maxIters = iters;
     
@@ -362,10 +362,10 @@ int lscg_eigen(const MatrixType& mat, const Rhs& rhs, Dest& x, const Preconditio
     int m = mat.rows();
 
 
-    timer t00 = wctime();
+    timer t00 = systime();
     VectorType residual = rhs - mat * x; // r_0 = b - A x_0
     VectorType normal_residual = mat.adjoint()*residual;
-    timer t01 = wctime();
+    timer t01 = systime();
     t_matvec += elapsed(t00, t01);
 
     double rhsNorm2 = (mat.adjoint()*rhs).squaredNorm(); 
@@ -388,10 +388,10 @@ int lscg_eigen(const MatrixType& mat, const Rhs& rhs, Dest& x, const Preconditio
     VectorType p(n), ptemp(n);
     p.setZero(); ptemp.setZero();
 
-    timer t02 = wctime();
+    timer t02 = systime();
     p = precond.solve(normal_residual);      // p_0 = M^-1 r_0 
 
-    timer t03 = wctime();
+    timer t03 = systime();
     t_preco += elapsed(t02, t03);
     // std::cout << "p: " << (mat.adjoint()*p)/ << std::endl; 
 
@@ -401,9 +401,9 @@ int lscg_eigen(const MatrixType& mat, const Rhs& rhs, Dest& x, const Preconditio
     int i = 0;
     while(i < maxIters)
     {
-        timer t0 = wctime();
+        timer t0 = systime();
         tmp.noalias() = mat * p;                    // the bottleneck of the algorithm
-        timer t1 = wctime();
+        timer t1 = systime();
         t_matvec += elapsed(t0, t1);
 
         double alpha = absNew / tmp.squaredNorm();         // the amount we travel on dir
@@ -422,10 +422,10 @@ int lscg_eigen(const MatrixType& mat, const Rhs& rhs, Dest& x, const Preconditio
             break;
         }
      
-        timer t2 = wctime();
+        timer t2 = systime();
         z = precond.solve(normal_residual);                           // approximately solve for "A z = residual"
         
-        timer t3 = wctime();
+        timer t3 = systime();
         t_preco += elapsed(t2, t3);
         double absOld = absNew;
         absNew = normal_residual.dot(z);                   // update the absolute value of r
@@ -435,7 +435,7 @@ int lscg_eigen(const MatrixType& mat, const Rhs& rhs, Dest& x, const Preconditio
     }
     iters = i+1;
     if(verb) {
-        timer stop = wctime();
+        timer stop = systime();
         printf("# of iter:  %d\n", iters);
         printf("Total time: %3.2e s.\n", elapsed(start, stop));
         printf("  Matvec:   %3.2e s.\n", t_matvec);
@@ -449,5 +449,8 @@ template int cg(const SpMat& mat, const Eigen::VectorXd& rhs, Eigen::VectorXd& x
 template int gmres(const SpMat& mat, const Eigen::VectorXd& rhs, Eigen::VectorXd& x, const Tree& precond, int iters, int restart, double tol_error, bool verb);
 template int cgls(const SpMat& mat, const Eigen::VectorXd& rhs, Eigen::VectorXd& x, const Tree& precond, Eigen::Index& iters, Eigen::VectorXd::RealScalar& tol, bool verb);
 template int lscg_eigen(const SpMat& mat, const Eigen::VectorXd& rhs, Eigen::VectorXd& x, const Eigen::LeastSquareDiagonalPreconditioner<double>& precond, int iters, double tol, bool verb);
+
+template int gmres(const SpMat& mat, const Eigen::VectorXd& rhs, Eigen::VectorXd& x, const ParTree& precond, int iters, int restart, double tol_error, bool verb);
+template int cgls(const SpMat& mat, const Eigen::VectorXd& rhs, Eigen::VectorXd& x, const ParTree& precond, Eigen::Index& iters, Eigen::VectorXd::RealScalar& tol, bool verb);
 
 

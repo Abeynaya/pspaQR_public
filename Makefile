@@ -1,3 +1,4 @@
+# MAKE SURE: ttor library should already be compiled 
 include Makefile.conf
 INCDIR = include
 EXTDIR = external
@@ -5,8 +6,8 @@ SRCDIR = src
 OBJDIR = obj
 
 #Necessary
-INCLUDE = -I$(INCDIR) -I$(EXTDIR) -I$(EIGENDIR) -I$(BLASDIR) 
-LDFLAGS +=  -L$(BLASLIB) 
+INCLUDE = -I$(INCDIR) -I$(EXTDIR) -I$(EIGENDIR) -I$(BLASDIR) -I$(TTORDIR)
+LDFLAGS +=  -L$(BLASLIB)
 
 CFLAGS = -std=c++14 -Wall -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE
 ifdef DEBUG
@@ -43,10 +44,16 @@ ifeq ($(HSL_AVAIL),1)
 	LDFLAGS +=  -L$(FORTRANLIB) -lgfortran -lquadmath -lm -L$(HSLLIB) -lhsl_mc64
 endif
 
+ifeq ($(USE_HWLOC),1)
+	INCLUDE += $(HWLOC_INC)
+	LDFLAGS += -L$(HWLOC_LIBS)
+	CFLAGS += -DUSE_HWLOC
+endif
 
-DEPS = $(INCDIR)/util.h  $(INCDIR)/tree.h $(INCDIR)/partition.h  $(INCDIR)/cluster.h $(INCDIR)/edge.h $(INCDIR)/operations.h $(INCDIR)/toperations.h  $(INCDIR)/profile.h $(INCDIR)/is.h 
-OBJ  = $(OBJDIR)/util.o  $(OBJDIR)/tree.o $(OBJDIR)/partition.o $(OBJDIR)/cluster.o $(OBJDIR)/edge.o $(OBJDIR)/operations.o $(OBJDIR)/toperations.o   $(OBJDIR)/profile.o $(OBJDIR)/is.o
+DEPS := $(wildcard $(INCDIR)/*.h)
+OBJ := $(patsubst $(INCDIR)/%.h,$(OBJDIR)/%.o,$(DEPS))
 
+TTOROBJ := $(wildcard $(TTORLIB)/*.o)
 all: spaQR
 
 # Tests
@@ -58,7 +65,7 @@ $(OBJDIR)/%.o: $(SRCDIR)/%.cpp $(DEPS)
 	$(CC) -c -o $@ $< $(CFLAGS) $(INCLUDE) 
 
 # Executables
-spaQR: pspaQR.cpp $(OBJ) 
+spaQR: pspaQR.cpp $(OBJ) $(TTOROBJ)
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS)  $(INCLUDE)  
 .PHONY: clean
 
