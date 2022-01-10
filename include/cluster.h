@@ -25,6 +25,9 @@ struct SepID {
         int sep;
         SepID(int l, int s) : lvl(l), sep(s){};
         SepID() : lvl(-1), sep(0){};
+
+        int level() const {return lvl;}
+        int index() const {return sep;}
         // Some lexicographics order
         // NOT the matrix ordering
         bool operator==(const SepID& other) const {
@@ -90,6 +93,10 @@ struct ClusterID {
         }
 
         int level() const {return self.lvl;};
+        SepID left() const {return l;};
+        SepID right() const {return r;};
+
+
 
         // Some lexicographics order
         // NOT the matrix ordering
@@ -134,11 +141,19 @@ private:
     /* Hierarchy */
     Cluster* parent; 
     ClusterID parentid;
-    Eigen::VectorXd* tau;
-    Eigen::MatrixXd* T;
+
+    /* Matrices stored from factorization */
+    /* Elmn */
+    Eigen::VectorXd* tau = nullptr;
+    Eigen::MatrixXd* T = nullptr;
+    /* Scaling */
+    Eigen::MatrixXd* Qs = nullptr;
+    Eigen::MatrixXd* Ts = nullptr; 
+    Eigen::VectorXd* taus = nullptr;
+
 
     /* Solution to linear system*/
-    Eigen::VectorXd* x; // Ax = b
+    Eigen::VectorXd* x = nullptr; // Ax = b
 
 
 public: 
@@ -153,16 +168,18 @@ public:
     std::list<Edge*> edgesOut;
     std::list<Edge*> edgesIn;
 
+    std::list<Edge*> edgesOutNbrSparsification;
+    std::list<Edge*> edgesInNbrSparsification;
+
     /* Solution to A' xt=b */
-    Eigen::VectorXd* xt; // A'xt = b
+    Eigen::VectorXd* xt = nullptr; // A'xt = b
 
 
 
 public:
     /* Methods */
     Cluster(int cstart_, int csize_, int rstart_, int rsize_, ClusterID id_, int order_) :
-            cstart(cstart_), csize(csize_), rstart(rstart_), rsize(rsize_), id(id_), order(order_), eliminated(false),
-            tau(nullptr), T(nullptr), x(nullptr), xt(nullptr)
+            cstart(cstart_), csize(csize_), rstart(rstart_), rsize(rsize_), id(id_), order(order_), eliminated(false)
             {
                 assert(rstart >= 0);
                 set_size(rsize_, csize_);
@@ -223,9 +240,19 @@ public:
     Eigen::MatrixXd* get_T();
     void set_size(int r, int c);
 
+    /* Scaling */
+    void set_Qs(Eigen::MatrixXd&);
+    void set_Ts(Eigen::MatrixXd&);
+    void set_taus(Eigen::VectorXd&);
+    Eigen::MatrixXd* get_Qs();
+    Eigen::MatrixXd* get_Ts();
+    Eigen::VectorXd* get_taus();
+
     /* Sparsification */
     void reset_size(int r, int c);
     void resize_x(int r);
+    void add_edge_spars_out(Edge*);
+    void add_edge_spars_in(Edge*);
 
     /* Solution to linear system */
     Segment head(); // return the first this->get_ncols() size of x

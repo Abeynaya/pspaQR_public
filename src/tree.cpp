@@ -447,7 +447,11 @@ void Tree::update_edges(Cluster* snew){
    
     // Allocate memory and create new edges
     for (auto n: snew->cnbrs){
-        add_edge(snew, n);
+        Edge* e = add_edge(snew, n);
+        if (snew->get_level()> this->ilvl+1 && n->get_level()> this->ilvl+1 && snew != n){
+            snew->add_edge_spars_out(e);
+            n->add_edge_spars_in(e);
+        }
     }
 
     snew->sort_edgesOut();
@@ -546,7 +550,7 @@ void Tree::diagScale(Cluster* c){
     MatrixXd* R = new MatrixXd(c->cols(), c->cols());
     *R = Q->topRows(c->cols()).triangularView<Upper>();
 
-    (*e->A21).topRows(c->cols()) = MatrixXd::Identity(c->cols(), c->cols());
+    (*e->A21).topRows(c->cols()) = MatrixXd::Identity(c->cols(), c->cols()); // ? Important?
     (*e->A21).bottomRows(c->rows()-c->cols()) = MatrixXd::Zero(c->rows()-c->cols(),c->cols());
 
     this->nnzR += 0.5*c->cols()*c->cols();
@@ -679,6 +683,10 @@ void Tree::partition(SpMat& A){
         else {
             interfaces[0].push_back(self);
         }
+        // To sparsify?
+        if (cid.level()>0 && cid.left().level()<=0 && cid.right().level()<=0){
+            interfaces2sparsify[0].push_back(self);
+        }
 
         k = knext; 
         l += nr2c;
@@ -726,6 +734,10 @@ void Tree::partition(SpMat& A){
             }
             else {
                 interfaces[lvl].push_back(parent);
+            }
+            // To sparsify?
+            if (idparent.level()>lvl && idparent.left().level()<=lvl && idparent.right().level()<=lvl){
+                interfaces2sparsify[lvl].push_back(parent);
             }
         }
     }
@@ -776,8 +788,15 @@ void Tree::assemble(SpMat& A){
             block2dense(rowval, colptr, nnzval, nbr->get_rstart(), self->get_cstart(), nbr->rows(), self->cols(), sA, false); 
             Edge* e = new Edge(self, nbr, sA);
             self->add_edgeOut(e);
-            if (self != nbr)
+
+            if (self != nbr){
                 nbr->add_edgeIn(e);
+            }
+
+            if (self->get_level()>0 && nbr->get_level()>0 && self != nbr){
+                self->add_edge_spars_out(e);
+                nbr->add_edge_spars_in(e);
+            }
         }
 
         self->sort_edgesOut();

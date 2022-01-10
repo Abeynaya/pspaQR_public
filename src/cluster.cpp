@@ -55,6 +55,10 @@ void Cluster::set_parent(Cluster* p){parent = p;}
 void Cluster::add_children(Cluster* c){children.push_back(c);}
 void Cluster::add_edgeOut(Edge* e){edgesOut.push_back(e);}
 void Cluster::add_edgeIn(Edge* e){edgesIn.push_back(e);}
+
+void Cluster::add_edge_spars_out(Edge* e){edgesOutNbrSparsification.push_back(e);}
+void Cluster::add_edge_spars_in(Edge* e){edgesInNbrSparsification.push_back(e);}
+
 void Cluster::sort_edgesOut(bool reverse){
     if (reverse){
         edgesOut.sort([](Edge* a, Edge* b){return a->n2->get_order() > b->n2->get_order();});
@@ -75,6 +79,24 @@ void Cluster::set_tau(int r, int c){
 
 Eigen::VectorXd* Cluster::get_tau(){return this->tau;}
 Eigen::MatrixXd* Cluster::get_T(){return this->T;}
+
+/* Scaling */
+void Cluster::set_Qs(Eigen::MatrixXd& Q_) {
+    this->Qs = new Eigen::MatrixXd(0,0);
+    *(this->Qs) = Q_;
+}
+void Cluster::set_Ts(Eigen::MatrixXd& T_) {
+    this->Ts = new Eigen::MatrixXd(0,0);
+    *(this->Ts) = T_;
+}
+void Cluster::set_taus(Eigen::VectorXd& t_) {
+    this->taus = new Eigen::VectorXd(0);
+    *(this->taus) = t_;
+}
+
+Eigen::MatrixXd* Cluster::get_Qs(){return this->Qs;}
+Eigen::MatrixXd* Cluster::get_Ts(){return this->Ts;}
+Eigen::VectorXd* Cluster::get_taus(){return this->taus;}
 
 void Cluster::set_size(int r, int c){
     rsize = r;

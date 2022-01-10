@@ -55,6 +55,8 @@ class Tree{
         std::vector<std::list<Cluster*>> bottoms; // bottoms.size() = nlevels
         std::vector<std::list<Cluster*>> interiors; //interiors.size() = nlevels
         std::vector<std::list<Cluster*>> interfaces; // interfaces.size() = nlevels
+        std::vector<std::list<Cluster*>> interfaces2sparsify; // interfaces2sparsify.size() = nlevels
+
         std::vector<std::list<Cluster*>> fine; // list of fine nodes
 
         int current_bottom;
@@ -87,7 +89,12 @@ class Tree{
         void sparsify_extra_rows(Eigen::MatrixXd& C, int& rank, double& tol, bool rel = true);
         void sparsifyD_imp(Cluster* c);
 
+        const std::list<Cluster*>& bottom_current() const {return bottoms[current_bottom];};
+        const std::list<Cluster*>& interiors_current() const {return interiors[current_bottom];};
+        const std::list<Cluster*>& interfaces_current() const {return interfaces[current_bottom];};
+        const std::list<Cluster*>& interfaces2sparsify_current() const {return interfaces2sparsify[current_bottom];};
 
+        const std::list<Cluster*>& bottom_original() const {return bottoms[0];};
 
         void split_edges(Cluster* c, Cluster* f);
         void diagScale(Cluster* c);
@@ -114,6 +121,7 @@ class Tree{
                             bottoms = std::vector<std::list<Cluster*>>(nlevels);
                             interiors = std::vector<std::list<Cluster*>>(nlevels);
                             interfaces = std::vector<std::list<Cluster*>>(nlevels);
+                            interfaces2sparsify = std::vector<std::list<Cluster*>>(nlevels);
                             fine = std::vector<std::list<Cluster*>>(nlevels);
                             Xcoo = nullptr;
                             profile = Profile(lvls, skip_);
@@ -129,10 +137,7 @@ class Tree{
         void set_square(int s);
         void set_order(float s);
         
-        const std::list<Cluster*>& bottom_current() const {return bottoms[current_bottom];};
-        const std::list<Cluster*>& interiors_current() const {return interiors[current_bottom];};
-        const std::list<Cluster*>& interfaces_current() const {return interfaces[current_bottom];};
-        const std::list<Cluster*>& bottom_original() const {return bottoms[0];};
+        
 
         // Get access to basic info
         int rows() const;

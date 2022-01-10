@@ -49,11 +49,17 @@ public:
 
 	// Add new edge 
 	Edge* new_edgeOut(Cluster*, Cluster*);
+
 	// Methods needed for elimination
 	void setup_fillin(Cluster*, Cluster*, ttor::Taskflow<pEdge2>*);
 	void alloc_fillin(Cluster*, ttor::Taskflow<pEdge2>*);
 	int update_cluster(Cluster*, Cluster*, ttor::Taskflow<Edge*>*);
 	int house(Cluster*);
+
+	// Methods for Scaling
+	void geqrf_cluster(Cluster* c);
+	void larfb_edge(Edge* e);
+	void trsm_edge(Edge* e);
 
 	int factorize();
 	~ParTree() {};

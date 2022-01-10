@@ -170,6 +170,15 @@ int main(int argc, char* argv[]){
 
     int n_threads = result["n_threads"].as<int>();
     int verbose = result["verb"].as<int>();
+
+    if (n_threads>1 && scale == 0){
+        cout << "Scaling necessary for parallel spaQR" << endl;
+        cout << "Setting scale to 1" << endl;
+        scale = 1;
+        cout << "Order also set to 1" << endl;
+        order = 1;
+    }
+
     // Tree
     ParTree t(nlevels, skip);
     t.set_scale(scale);
