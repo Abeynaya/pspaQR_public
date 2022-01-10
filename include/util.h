@@ -234,6 +234,7 @@ void orgqr(Eigen::MatrixXd* v, Eigen::VectorXd* h);
 */
 void larft(Eigen::MatrixXd* V, Eigen::VectorXd* tau, Eigen::MatrixXd* T);
 
+/* Apply householder vectors on a rectangular matrix */
 /* Apply householder vectors on a rectangular matrix 
 V = [1    *     *   * *
      v(1) 1     *   * *
@@ -242,8 +243,12 @@ V = [1    *     *   * *
 H = H(1) H(2) H(3) ... H(k)
 C <- H^T C
 */
-void larfb(Eigen::MatrixXd* V, Eigen::MatrixXd* T, Eigen::MatrixXd* C);
 void larfb(Eigen::MatrixXd* V, Eigen::MatrixXd* T, Eigen::VectorXd* C, char side = 'L', char trans = 'T', char direct = 'F', char storev = 'C');
+void larfb(Eigen::MatrixXd* V, Eigen::MatrixXd* T, Eigen::MatrixXd* C, char side = 'L', char trans = 'T', char direct = 'F', char storev = 'C');
+
+
+void larfb_notrans_right(Eigen::MatrixXd* V, Eigen::MatrixXd* T, Eigen::MatrixXd* C);
+
 
 /**
  * A = QR

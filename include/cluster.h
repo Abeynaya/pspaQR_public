@@ -133,6 +133,7 @@ private:
     ClusterID id; 
     int order; // Elimination order
     bool eliminated;
+    int rank; // to store the rank after sparsification
 
     // Original size of the cluster (when the cluster is formed)
     int csize_org;
@@ -142,6 +143,9 @@ private:
     Cluster* parent; 
     ClusterID parentid;
 
+    /* Self edge for easy access -- all clusters will have this */
+    Edge* eself = nullptr; 
+
     /* Matrices stored from factorization */
     /* Elmn */
     Eigen::VectorXd* tau = nullptr;
@@ -150,6 +154,10 @@ private:
     Eigen::MatrixXd* Qs = nullptr;
     Eigen::MatrixXd* Ts = nullptr; 
     Eigen::VectorXd* taus = nullptr;
+    /* Sparsification */
+    Eigen::MatrixXd* Q_sp = nullptr;
+    Eigen::MatrixXd* T_sp = nullptr; 
+    Eigen::VectorXd* tau_sp = nullptr;
 
 
     /* Solution to linear system*/
@@ -185,6 +193,7 @@ public:
                 set_size(rsize_, csize_);
                 csize_org = csize_;
                 rsize_org = rsize_;
+                rank = csize_;
             };
 
     // Whether a cluster has been eliminated
@@ -212,6 +221,8 @@ public:
     int get_level() const; 
     int cols() const;
     int rows() const;
+    void set_rank(int r);
+    int get_rank() const;
     int get_cstart() const;
     int get_rstart() const;
     int original_rows() const;
@@ -223,13 +234,17 @@ public:
 
     int part();
 
-
     /*Heirarchy*/
     Cluster* get_parent();
     ClusterID get_parentid();
     void set_parentid(ClusterID cid);
     void set_parent(Cluster* p);
     void add_children(Cluster* c);
+
+    /* Edges */
+    Edge* self_edge();
+    void add_self_edge(Edge*);
+
     void add_edgeOut(Edge* e);
     void add_edgeIn(Edge* e);
     void sort_edgesOut(bool reverse = false);
@@ -253,6 +268,12 @@ public:
     void resize_x(int r);
     void add_edge_spars_out(Edge*);
     void add_edge_spars_in(Edge*);
+    void set_Q_sp(Eigen::MatrixXd&);
+    void set_T_sp(Eigen::MatrixXd&);
+    void set_tau_sp(Eigen::VectorXd&);
+    Eigen::MatrixXd* get_Q_sp();
+    Eigen::MatrixXd* get_T_sp();
+    Eigen::VectorXd* get_tau_sp();
 
     /* Solution to linear system */
     Segment head(); // return the first this->get_ncols() size of x

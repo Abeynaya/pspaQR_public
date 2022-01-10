@@ -36,6 +36,8 @@ void QR::fwd(){
 			++i;
 		}
 	}
+	// cout << "qr_f " << xc << endl << endl;
+
 }
 
 void QR::bwd(){
@@ -53,7 +55,7 @@ void QR::bwd(){
 
 	R = ((*c->edgesOut.begin())->A21->topRows(xs.size()));
 	trsv(&R, &xs, CblasUpper, CblasNoTrans, CblasNonUnit);
-
+	// cout << "qr_b " << xs << endl << endl;
 }
 
 /* Reassign rows */

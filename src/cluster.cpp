@@ -36,6 +36,8 @@ int Cluster::get_order() const {return order;}
 int Cluster::get_level() const {return id.self.lvl;} // Get level of the cluster
 int Cluster::cols() const {return csize;}
 int Cluster::rows() const {return rsize;}
+void Cluster::set_rank(int r){rank = r;}
+int Cluster::get_rank() const {return rank;}
 int Cluster::get_cstart() const {return cstart;}
 int Cluster::get_rstart() const {return rstart;}
 int Cluster::original_rows() const {return rsize_org;};
@@ -51,8 +53,16 @@ Cluster* Cluster::get_parent(){return parent;}
 ClusterID Cluster::get_parentid(){return parentid;}
 void Cluster::set_parentid(ClusterID cid){parentid = cid;}
 void Cluster::set_parent(Cluster* p){parent = p;}
-
 void Cluster::add_children(Cluster* c){children.push_back(c);}
+
+Edge* Cluster::self_edge(){
+    assert(eself!=nullptr);
+    return eself;
+}
+
+void Cluster::add_self_edge(Edge* e){
+    eself = e;
+}
 void Cluster::add_edgeOut(Edge* e){edgesOut.push_back(e);}
 void Cluster::add_edgeIn(Edge* e){edgesIn.push_back(e);}
 
@@ -97,6 +107,24 @@ void Cluster::set_taus(Eigen::VectorXd& t_) {
 Eigen::MatrixXd* Cluster::get_Qs(){return this->Qs;}
 Eigen::MatrixXd* Cluster::get_Ts(){return this->Ts;}
 Eigen::VectorXd* Cluster::get_taus(){return this->taus;}
+
+/* Sparsification  */
+void Cluster::set_Q_sp(Eigen::MatrixXd& Q_) {
+    this->Q_sp = new Eigen::MatrixXd(0,0);
+    *(this->Q_sp) = Q_;
+}
+void Cluster::set_T_sp(Eigen::MatrixXd& T_) {
+    this->T_sp = new Eigen::MatrixXd(0,0);
+    *(this->T_sp) = T_;
+}
+void Cluster::set_tau_sp(Eigen::VectorXd& t_) {
+    this->tau_sp = new Eigen::VectorXd(0);
+    *(this->tau_sp) = t_;
+}
+
+Eigen::MatrixXd* Cluster::get_Q_sp(){return this->Q_sp;}
+Eigen::MatrixXd* Cluster::get_T_sp(){return this->T_sp;}
+Eigen::VectorXd* Cluster::get_tau_sp(){return this->tau_sp;}
 
 void Cluster::set_size(int r, int c){
     rsize = r;

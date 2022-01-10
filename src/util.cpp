@@ -410,15 +410,8 @@ void larft(MatrixXd* V, VectorXd* tau, MatrixXd* T){
     assert(info==0);
 }
 
-/* Apply householder vectors on a rectangular matrix 
-V = [1    *     *   * *
-     v(1) 1     *   * *
-     v(1) v(2)  *   * *
-     v(1) v(2) v(3) * *]; 
-H = H(1) H(2) H(3) ... H(k) = I - V * T * V^T
-C <- H^T C
-*/
-void larfb(MatrixXd* V, MatrixXd* T, MatrixXd* C){
+/* C is a vector */
+void larfb(MatrixXd* V, MatrixXd* T, VectorXd* C, char side, char trans, char direct, char storev){
     int m = C->rows();
     int n = C->cols();
     int k = V->cols();
@@ -428,28 +421,6 @@ void larfb(MatrixXd* V, MatrixXd* T, MatrixXd* C){
     if (m==0 || n==0){
         return;
     }
-    #ifdef USE_MKL
-    char side = 'L';
-    char trans = 'T';
-    char direct = 'F';
-    char storev = 'C';
-    MatrixXd work(n,k);
-    work.setZero();
-    dlarfb_(&side, &trans, &direct, &storev, &m, &n, &k, V->data(), &m, T->data(), &k, C->data(), &m, work.data(), &n);
-    #else 
-    int info = LAPACKE_dlarfb(LAPACK_COL_MAJOR, 'L', 'T', 'F', 'C', m, n, k, V->data(), m, T->data(), k, C->data(), m);
-    assert(info==0);
-    #endif
-}
-
-void larfb(MatrixXd* V, MatrixXd* T, VectorXd* C, char side, char trans, char direct, char storev){
-    int m = C->rows();
-    int n = C->cols();
-    int k = V->cols();
-    assert(m == V->rows());
-    assert(T != nullptr);
-    assert(T->rows() == k);
-
 
     #ifdef USE_MKL
     MatrixXd work(n,k);
@@ -461,6 +432,48 @@ void larfb(MatrixXd* V, MatrixXd* T, VectorXd* C, char side, char trans, char di
     #endif
 }
 
+// Matrix C
+/* Apply householder vectors on a rectangular matrix 
+V is stored columnwise
+V = [1    *     *   * *
+     v(1) 1     *   * *
+     v(1) v(2)  *   * *
+     v(1) v(2) v(3) * *]; 
+H = H(1) H(2) H(3) ... H(k) = I - V * T * V^T
+C <- H^T C
+Default parameters for side = 'L', trans='T', direct = 'F', storev='C'
+*/ 
+void larfb(MatrixXd* V, MatrixXd* T, MatrixXd* C, char side, char trans, char direct, char storev){
+    int m = C->rows();
+    int n = C->cols();
+    int k = V->cols();
+    int ldv;
+    if (storev=='C' && side=='L') {assert(m == V->rows()); ldv=m;}
+    if (storev=='C' && side=='R') {assert(n == V->rows()); ldv=n;}
+
+    assert(T != nullptr);
+    assert(T->rows() == k);
+    if (m==0 || n==0){
+        return;
+    }
+
+    #ifdef USE_MKL
+    MatrixXd work;
+    int ldw;
+    if (side == 'L') {work = MatrixXd(n,k); ldw=n;}
+    if (side == 'R') {work = MatrixXd(m,k); ldw=m;}
+    work.setZero();
+    dlarfb_(&side, &trans, &direct, &storev, &m, &n, &k, V->data(), &ldv, T->data(), &k, C->data(), &m, work.data(), &ldw);
+    #else 
+    int info = LAPACKE_dlarfb(LAPACK_COL_MAJOR, side, trans, direct, storev, m, n, k, V->data(), ldv, T->data(), k, C->data(), m);
+    assert(info==0);
+    #endif
+}
+
+void larfb_notrans_right(MatrixXd* V, MatrixXd* T, MatrixXd* C){
+    larfb(V, T, C, 'R', 'N', 'F', 'C');
+    return;
+}
 
 // RRQR
 void geqp3(MatrixXd* A, VectorXi* jpvt, VectorXd* tau) {

@@ -452,6 +452,9 @@ void Tree::update_edges(Cluster* snew){
             snew->add_edge_spars_out(e);
             n->add_edge_spars_in(e);
         }
+        if (snew==n){
+            snew->add_self_edge(e);
+        }
     }
 
     snew->sort_edgesOut();
@@ -791,6 +794,10 @@ void Tree::assemble(SpMat& A){
 
             if (self != nbr){
                 nbr->add_edgeIn(e);
+            }
+            else {
+                //self == nbr
+                self->add_self_edge(e);
             }
 
             if (self->get_level()>0 && nbr->get_level()>0 && self != nbr){

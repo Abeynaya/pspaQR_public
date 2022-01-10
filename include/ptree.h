@@ -58,8 +58,12 @@ public:
 
 	// Methods for Scaling
 	void geqrf_cluster(Cluster* c);
-	void larfb_edge(Edge* e);
+	// void larfb_edge(Edge* e);
 	void trsm_edge(Edge* e);
+
+	// Methods for sparsification
+	int n_deps_sparsification(Cluster* c);
+	void sparsify_rrqr_only(Cluster* c);
 
 	int factorize();
 	~ParTree() {};
