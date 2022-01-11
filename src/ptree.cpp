@@ -437,12 +437,10 @@ int ParTree::factorize(){
             Threadpool_shared tp(this->n_threads, verb, "sparsify_");
             /* Scale */
             Taskflow<Cluster*> scale_geqrf_tf(&tp, verb);
-            Taskflow<Edge*> scale_larfb_tf(&tp, verb);
-            Taskflow<Edge*> scale_trsm_tf(&tp, verb);
+            Taskflow<pCluster2> scale_larfb_trsm_tf(&tp, verb);
             /* Sparsify */
             Taskflow<Cluster*> sparsify_rrqr_tf(&tp, verb);
             Taskflow<pCluster2> sparsify_larfb_tf(&tp, verb);
-            // Taskflow<pCluster2> sparsify_larfb_out_tf(&tp, verb);
 
             /* Scaling */
             scale_geqrf_tf.set_mapping([&] (Cluster* c){
@@ -458,10 +456,10 @@ int ParTree::factorize(){
                     // Fulfill these even for clusters that are not sparsified
                     // Apply ormqr to rows and cols
                     for (auto ein: c->edgesInNbrSparsification){
-                        scale_larfb_tf.fulfill_promise(ein);
+                        scale_larfb_trsm_tf.fulfill_promise({c, ein->n1});
                     }
                     for (auto eout: c->edgesOutNbrSparsification){
-                        scale_trsm_tf.fulfill_promise(eout);
+                        scale_larfb_trsm_tf.fulfill_promise({eout->n2, c});
                     }
                     // Sparsify cluster
                     sparsify_rrqr_tf.fulfill_promise(c);
@@ -473,54 +471,34 @@ int ParTree::factorize(){
                     return 5;
                 });
 
-            scale_larfb_tf.set_mapping([&] (Edge* e){
-                    return (e->n1->get_order())%ttor_threads;  // Important
+            /* Apply Q_c^T A_cn and R_n\A_cn 
+             * Q_c, R_n from scaling */
+            scale_larfb_trsm_tf.set_mapping([&] (pCluster2 cn){
+                    return (cn[0]->get_order() + cn[1]->get_order())%ttor_threads;  
                 })
-                .set_binding([](Edge*) {// Important to avoid race condition
-                    return true; 
+                .set_indegree([](pCluster2){
+                    return 2; // the geqrf on clusters c and n
                 })
-                .set_indegree([](Edge*){
-                    return 1; // the geqrf on e->n2
-                })
-                .set_task([&] (Edge* e) {
-                    Cluster* c = e->n2; 
-                    if (!want_sparsify(c)) return;
-                    larfb(c->get_Qs(), c->get_Ts(), e->A21);
-                })
-                .set_fulfill([&] (Edge* e){
-                    // Sparsify cluster
-                    sparsify_rrqr_tf.fulfill_promise(e->n1);
-                    sparsify_rrqr_tf.fulfill_promise(e->n2);
-                })
-                .set_name([](Edge* e) {
-                    return "scale_larfb_tf" + to_string(e->n1->get_order())+ "_" + to_string(e->n2->get_order());
-                })
-                .set_priority([&](Edge*) {
-                    return 5;
-                });
+                .set_task([&] (pCluster2 cn) {
+                    Cluster* c = cn[0];
+                    Cluster* n = cn[1]; 
+                    // Find the edge containing A_cn block -- should exist
+                    auto found = find_if(c->edgesIn.begin(), c->edgesIn.end(), [&n](Edge* e){return e->n1==n;});
+                    assert(found != c->edgesIn.end());
+                    Edge* e = *found;
+                    if (want_sparsify(c)) larfb(c->get_Qs(), c->get_Ts(), e->A21);
+                    if (want_sparsify(n)) trsm_edge(e);
 
-            scale_trsm_tf.set_mapping([&] (Edge* e){
-                    return (e->n2->get_order())%ttor_threads; 
                 })
-                .set_indegree([](Edge*){
-                    return 1; // the geqrf on e->n1
-                })
-                .set_binding([](Edge*) { // Important to avoid race condition
-                    return true; 
-                })
-                .set_task([&] (Edge* e) {
-                    if (!want_sparsify(e->n1)) return;
-                    trsm_edge(e);
-                })
-                .set_fulfill([&] (Edge* e){
+                .set_fulfill([&] (pCluster2 cn){
                     // Sparsify cluster
-                    sparsify_rrqr_tf.fulfill_promise(e->n2);
-                    sparsify_rrqr_tf.fulfill_promise(e->n1);
+                    sparsify_rrqr_tf.fulfill_promise(cn[0]);
+                    sparsify_rrqr_tf.fulfill_promise(cn[1]);
                 })
-                .set_name([](Edge* e) {
-                    return "scale_trsm_tf" + to_string(e->n1->get_order())+ "_" + to_string(e->n2->get_order());
+                .set_name([](pCluster2 cn) {
+                    return "scale_larfb_trsm_tf" + to_string(cn[0]->get_order())+ "_" + to_string(cn[1]->get_order());
                 })
-                .set_priority([&](Edge*) {
+                .set_priority([&](pCluster2) {
                     return 5;
                 });
 
@@ -529,8 +507,8 @@ int ParTree::factorize(){
                     return c->get_order()%ttor_threads; 
                 })
                 .set_indegree([](Cluster* c){
-                    return 2*c->edgesOutNbrSparsification.size()  // trsm from scaling on cols
-                            + 2*c->edgesInNbrSparsification.size()  // larfb from scaling on rows
+                    return c->edgesOutNbrSparsification.size()  // trsm from scaling on cols
+                            + c->edgesInNbrSparsification.size()  // larfb from scaling on rows
                             + 1;  // scaling on itself
                 })
                 .set_task([&] (Cluster* c) {
