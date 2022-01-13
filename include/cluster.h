@@ -148,6 +148,7 @@ private:
 
     /* Matrices stored from factorization */
     /* Elmn */
+    Eigen::MatrixXd* Q = nullptr;
     Eigen::VectorXd* tau = nullptr;
     Eigen::MatrixXd* T = nullptr;
     /* Scaling */
@@ -250,9 +251,13 @@ public:
     void sort_edgesOut(bool reverse = false);
 
     /*Elimination*/
-    void set_tau(int r, int c);
+    void set_Q(Eigen::MatrixXd&);
+    void set_tau(Eigen::VectorXd&);
+    void set_T(Eigen::MatrixXd&);
+    void set_tau(int, int);
     Eigen::VectorXd* get_tau();
     Eigen::MatrixXd* get_T();
+    Eigen::MatrixXd* get_Q();
     void set_size(int r, int c);
 
     /* Scaling */

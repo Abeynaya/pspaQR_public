@@ -39,16 +39,7 @@ class ParTree: public Tree
 private:
 	int n_threads;
 	int verb; // For ttor debugging
-
-
-public: 
-	void set_nthreads(int);
-	void set_verbose(int);
-
-	ParTree(int nlevels_, int skip_) : Tree(nlevels_, skip_) {n_threads=1;};
-
-	// Add new edge 
-	Edge* new_edgeOut(Cluster*, Cluster*);
+	int ttor_log; // For ttor logging and profiling
 
 	// Methods needed for elimination
 	void setup_fillin(Cluster*, Cluster*, ttor::Taskflow<pEdge2>*);
@@ -57,15 +48,41 @@ public:
 	int house(Cluster*);
 
 	// Methods for Scaling
-	void geqrf_cluster(Cluster* c);
+	void geqrf_cluster(Cluster*);
 	// void larfb_edge(Edge* e);
-	void trsm_edge(Edge* e);
+	void trsm_edge(Edge*);
 
 	// Methods for sparsification
-	int n_deps_sparsification(Cluster* c);
-	void sparsify_rrqr_only(Cluster* c);
+	int n_deps_sparsification(Cluster*);
+	void sparsify_rrqr_only(Cluster*);
+
+	// Methods for solve
+	void QR_fwd(Cluster*) const;
+	void QR_bwd(Cluster*) const;
+	void scaleD_fwd(Cluster*) const;
+	void scaleD_bwd(Cluster*) const;
+	void orthogonalD_fwd(Cluster*) const;
+	void orthogonalD_bwd(Cluster*) const;
+	void merge_fwd(Cluster*) const;
+	void merge_bwd(Cluster*) const;
+
+
+
+public: 
+	void set_nthreads(int);
+	void set_verbose(int);
+	void set_ttor_log(int);
+
+
+	ParTree(int nlevels_, int skip_) : Tree(nlevels_, skip_) {n_threads=1;};
+
+	// Add new edge 
+	Edge* new_edgeOut(Cluster*, Cluster*);
+
+	
 
 	int factorize();
+	void solve(Eigen::VectorXd b, Eigen::VectorXd& x) const;
 	~ParTree() {};
 };
 

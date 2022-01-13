@@ -79,6 +79,19 @@ void Cluster::sort_edgesOut(bool reverse){
 }
 
 /*Elimination*/
+void Cluster::set_Q(Eigen::MatrixXd& Q_) {
+    this->Q = new Eigen::MatrixXd(0,0);
+    *(this->Q) = Q_;
+}
+void Cluster::set_T(Eigen::MatrixXd& T_) {
+    this->T = new Eigen::MatrixXd(0,0);
+    *(this->T) = T_;
+}
+void Cluster::set_tau(Eigen::VectorXd& t_) {
+    this->tau = new Eigen::VectorXd(0);
+    *(this->tau) = t_;
+}
+
 void Cluster::set_tau(int r, int c){
     int k = std::min(r,c);
     this->tau = new Eigen::VectorXd(k);
@@ -87,8 +100,10 @@ void Cluster::set_tau(int r, int c){
     this->T->setZero();
 }
 
+Eigen::MatrixXd* Cluster::get_Q(){return this->Q;}
 Eigen::VectorXd* Cluster::get_tau(){return this->tau;}
 Eigen::MatrixXd* Cluster::get_T(){return this->T;}
+
 
 /* Scaling */
 void Cluster::set_Qs(Eigen::MatrixXd& Q_) {

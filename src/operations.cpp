@@ -83,6 +83,7 @@ void ScaleD::fwd(){
 void ScaleD::bwd(){
 	MatrixXd R = Q->topRows(xs.size());
 	trsv(&R, &xs, CblasUpper, CblasNoTrans, CblasNonUnit);
+	cout << xs << endl << endl;
 }
 
 /* Sparsification using Orthogonal transformations */

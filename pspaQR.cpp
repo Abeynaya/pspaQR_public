@@ -48,6 +48,7 @@ int main(int argc, char* argv[]){
         // Detail
         ("n_threads", "Number of threads", cxxopts::value<int>()->default_value("1"))
         ("verb", "Verbose printing for ttor debugging. Default 0. Takes 1,2,3", cxxopts::value<int>()->default_value("0"))
+        ("log", "TTor logging for profiling. Set 0 or 1. Default 0. ", cxxopts::value<int>()->default_value("0"))
         // Use solvers from Eigen library
         ("useEigenLSCG","If true, run CGLS scheme with standard diagonal preconditioner from Eigen library. Default false.", cxxopts::value<int>()->default_value("0"))
         ("useEigenQR","If true, run SparseQR with default ordering from Eigen library. Default false.", cxxopts::value<int>()->default_value("0"))
@@ -170,6 +171,8 @@ int main(int argc, char* argv[]){
 
     int n_threads = result["n_threads"].as<int>();
     int verbose = result["verb"].as<int>();
+    int tlog = result["log"].as<int>();
+
 
     if (n_threads>1 && scale == 0){
         cout << "Scaling necessary for parallel spaQR" << endl;
@@ -187,6 +190,8 @@ int main(int argc, char* argv[]){
     t.set_hsl(hsl);
     t.set_nthreads(n_threads);
     t.set_verbose(verbose);
+    t.set_ttor_log(tlog);
+
 
 
     if (nrows == ncols) t.set_square(1); // default 0
