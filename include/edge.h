@@ -17,13 +17,16 @@ struct Edge{
 		Cluster* n2;
 		Eigen::MatrixXd* A21;
 
+		// std::list<Cluster*> interior_deps;
+		long unsigned int interior_deps;
+
 		Edge(Cluster* n1_, Cluster* n2_, Eigen::MatrixXd* A): n1(n1_), n2(n2_){
 			A21 = A;
 			if (A != nullptr){
 				assert(A->rows() == n2->rows());
 				assert(A->cols() == n1->cols());
 			}
-			
+			interior_deps=0;	
 		}
 
 		~Edge(){

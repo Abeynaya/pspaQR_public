@@ -43,8 +43,8 @@ private:
 
 	// Methods needed for elimination
 	void setup_fillin(Cluster*, Cluster*, ttor::Taskflow<pEdge2>*);
-	void alloc_fillin(Cluster*, ttor::Taskflow<pEdge2>*);
-	int update_cluster(Cluster*, Cluster*, ttor::Taskflow<Edge*>*);
+	void alloc_fillin(Cluster*, Cluster*, ttor::Taskflow<Edge*>*);
+	int update_cluster(Cluster*, Cluster*, ttor::Taskflow<Cluster*>*, ttor::Taskflow<pCluster2>*);
 	int house(Cluster*);
 
 	// Methods for Scaling
@@ -78,6 +78,8 @@ public:
 
 	// Add new edge 
 	Edge* new_edgeOut(Cluster*, Cluster*);
+	Edge* new_edgeOutFillin(Cluster*, Cluster*);
+
 
 	
 

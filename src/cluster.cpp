@@ -66,6 +66,20 @@ void Cluster::add_self_edge(Edge* e){
 void Cluster::add_edgeOut(Edge* e){edgesOut.push_back(e);}
 void Cluster::add_edgeIn(Edge* e){edgesIn.push_back(e);}
 
+void Cluster::add_edgeOutFillin(Edge* e){edgesOutFillin.push_back(e);}
+void Cluster::add_edgeInFillin(Edge* e){edgesInFillin.push_back(e);}
+
+void Cluster::combine_edgesOut(){
+    if (!edgesOutCombined)
+        edgesOut.insert(edgesOut.end(), edgesOutFillin.begin(), edgesOutFillin.end());
+    edgesOutCombined = true;
+}
+void Cluster::combine_edgesIn(){
+    if (!edgesInCombined)
+        edgesIn.insert(edgesIn.end(), edgesInFillin.begin(), edgesInFillin.end());
+    edgesInCombined = true;
+}
+
 void Cluster::add_edge_spars_out(Edge* e){edgesOutNbrSparsification.push_back(e);}
 void Cluster::add_edge_spars_in(Edge* e){edgesInNbrSparsification.push_back(e);}
 

@@ -474,7 +474,7 @@ void Tree::update_edges(Cluster* snew){
                 assert(eold->A21->cols() == sold->cols());
 
                 (*found)->A21->block(nold->rposparent, sold->cposparent, nold->rows(), sold->cols()) = *(eold->A21);
-                delete eold;
+                delete eold; // just makes it a nullptr, so this is safe to do in the loop 
             }
             
         }
@@ -690,6 +690,9 @@ void Tree::partition(SpMat& A){
         if (cid.level()>0 && cid.left().level()<=0 && cid.right().level()<=0){
             interfaces2sparsify[0].push_back(self);
         }
+        else if (cid.level()>0){
+            interfaces_no_sparsify[0].push_back(self);
+        }
 
         k = knext; 
         l += nr2c;
@@ -741,6 +744,9 @@ void Tree::partition(SpMat& A){
             // To sparsify?
             if (idparent.level()>lvl && idparent.left().level()<=lvl && idparent.right().level()<=lvl){
                 interfaces2sparsify[lvl].push_back(parent);
+            }
+            else if (idparent.level()>lvl) {
+                interfaces_no_sparsify[lvl].push_back(parent);
             }
         }
     }

@@ -145,6 +145,8 @@ private:
 
     /* Self edge for easy access -- all clusters will have this */
     Edge* eself = nullptr; 
+    bool edgesOutCombined=false;
+    bool edgesInCombined=false;
 
     /* Matrices stored from factorization */
     /* Elmn */
@@ -176,6 +178,8 @@ public:
     std::set<Cluster*> rnbrs; // neigbors including self
     std::list<Edge*> edgesOut;
     std::list<Edge*> edgesIn;
+    std::list<Edge*> edgesOutFillin;
+    std::list<Edge*> edgesInFillin;
 
     std::list<Edge*> edgesOutNbrSparsification;
     std::list<Edge*> edgesInNbrSparsification;
@@ -248,6 +252,11 @@ public:
 
     void add_edgeOut(Edge* e);
     void add_edgeIn(Edge* e);
+    void add_edgeOutFillin(Edge* e);
+    void add_edgeInFillin(Edge* e);
+    // Combine edgesOut and edgesOutFillin
+    void combine_edgesOut();
+    void combine_edgesIn();
     void sort_edgesOut(bool reverse = false);
 
     /*Elimination*/

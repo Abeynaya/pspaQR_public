@@ -28,12 +28,28 @@ Edge* ParTree::new_edgeOut(Cluster* c1, Cluster* c2){
     c1->cnbrs.insert(c2);
     c1->add_edgeOut(e);
 
-    if (c1->get_level()>this->ilvl && c2->get_level()>this->ilvl && c1 != c2){
+    if (c1->get_level()>this->current_bottom && c2->get_level()>this->current_bottom && c1 != c2){
         c1->add_edge_spars_out(e);
     }
     return e; 
 }
 
+/* Add a fillin edge between c1 and c2
+ such that A(c2, c1) block is non-zero */
+Edge* ParTree::new_edgeOutFillin(Cluster* c1, Cluster* c2){
+    Edge* e;
+
+    MatrixXd* A = new MatrixXd(c2->rows(), c1->cols());
+    A->setZero();
+    e = new Edge(c1, c2, A);
+    c1->cnbrs.insert(c2); // probably safe?
+    c1->add_edgeOutFillin(e);
+
+    if (c1->get_level()>this->current_bottom && c2->get_level()>this->current_bottom && c1 != c2){
+        c1->add_edge_spars_out(e);
+    }
+    return e; 
+}
 void ParTree::setup_fillin(Cluster* c, Cluster* n, Taskflow<pEdge2>* add_edge_tf){
     auto found_self = find_if(c->edgesOut.begin(), c->edgesOut.end(), [&c](Edge* e){return e->n2 == c;});
     assert(found_self != c->edgesOut.end()); // Should be there
@@ -56,20 +72,27 @@ void ParTree::setup_fillin(Cluster* c, Cluster* n, Taskflow<pEdge2>* add_edge_tf
     
 }
 
-void ParTree::alloc_fillin(Cluster* n, Taskflow<pEdge2>* add_edge_tf){
-    auto found_int = find_if(this->interiors_current().begin(), this->interiors_current().end(), [&n](Cluster* c){return n==c;});
-    if (found_int == this->interiors_current().end()){
-        for (auto elm_c: this->interiors_current()){ // Clusters that will be eliminated in the current lvl
-            for (auto eout: elm_c->edgesOut){
-                if (eout->n2 == n){
-                    setup_fillin(elm_c, n, add_edge_tf);
-                    break;
-                }
+void ParTree::alloc_fillin(Cluster* c, Cluster* n, Taskflow<Edge*>* add_edge_tf){
+    for (auto edge: c->edgesOut){
+        Edge* ecn = nullptr;
+        Cluster* nbr_c = edge->n2; 
+        auto found_out = find_if(n->edgesOut.begin(), n->edgesOut.end(), [&nbr_c](Edge* e){return (e->n2 == nbr_c );});
+        auto found_fillin = n->edgesOutFillin.end();
+        if (found_out == n->edgesOut.end()){
+            found_fillin = find_if(n->edgesOutFillin.begin(), n->edgesOutFillin.end(), [&nbr_c](Edge* e) {return (e->n2 == nbr_c);});
+            if (found_fillin == n->edgesOutFillin.end()){ // Cannot find the edge
+                ecn = new_edgeOutFillin(n, nbr_c);
+                // ecn->interior_deps.push_back(c);
+                ecn->interior_deps++;
+                add_edge_tf->fulfill_promise(ecn); // add edgeInFillin
+            }
+            else {
+                (*found_fillin)->interior_deps++;
             }
         }
-    }
-    else {// Cluster n is an interior
-        setup_fillin(n,n, add_edge_tf);
+        else {
+            (*found_out)->interior_deps++;
+        }
     }
     return;
 }
@@ -82,6 +105,9 @@ int ParTree::house(Cluster* c){
         cout << "cluster has zero cols" << endl;
         exit(1);
     }
+
+    // Combine edgesIn and edgesInFillin -- just to be consistent
+    c->combine_edgesIn();
 
     /* Do Householder reflections */
     vector<MatrixXd*> H;
@@ -124,19 +150,8 @@ int ParTree::house(Cluster* c){
 }
 
 // Update Q^T A after householder on interiors
-int ParTree::update_cluster(Cluster* c, Cluster* n, Taskflow<Edge*>* tf){
-    // // Concatenate the blocks to get Q
-    // vector<MatrixXd*> H;
-    // int num_rows=0;
-    // int num_cols=0;
-    // for (auto edge: c->edgesOut){
-    //     H.push_back(edge->A21);
-    //     num_rows += edge->A21->rows();
-    //     num_cols = edge->A21->cols(); // Must be the same
-    // }
-    // MatrixXd* Q = new MatrixXd(num_rows, num_cols);
-    // concatenate(H, Q);
-
+int ParTree::update_cluster(Cluster* c, Cluster* n, Taskflow<Cluster*>* scale_geqrf_tf, Taskflow<pCluster2>* scale_larfb_trsm_tf){
+    n->combine_edgesOut();
 
     // Concatenate to get the matrix V so that V <- Q^T V
     vector<MatrixXd*> N;
@@ -144,29 +159,13 @@ int ParTree::update_cluster(Cluster* c, Cluster* n, Taskflow<Edge*>* tf){
     int curr_row = 0;
 
     for (auto edge: c->edgesOut){
-        Edge* ecn;
-        assert (edge->A21 != nullptr); // Only the cnbrs + c itself
-        
         Cluster* nbr_c = edge->n2; 
         auto found_out = find_if(n->edgesOut.begin(), n->edgesOut.end(), [&nbr_c](Edge* e){return (e->n2 == nbr_c );});
-
-        // Fill-in => Allocate memory first
-        if (found_out == n->edgesOut.end()){
-            ecn = new_edgeOut(n, nbr_c);
-            if (n != nbr_c) {
-                // insert in edgeIn
-                tf->fulfill_promise(ecn);
-            }
-        }
-        else {
-            ecn = *(found_out);
-        }
-        
-        assert(ecn->A21 != nullptr);
+        assert(found_out != n->edgesOut.end()); // Fill-in allocated already
+        Edge* ecn = *(found_out);
         N.push_back(ecn->A21);
         V.middleRows(curr_row, ecn->A21->rows()) = *ecn->A21; 
         curr_row += ecn->A21->rows();  
-        
     }
 
     // Compute V = Q^T V
@@ -178,12 +177,20 @@ int ParTree::update_cluster(Cluster* c, Cluster* n, Taskflow<Edge*>* tf){
         *(N[i]) = V.middleRows(curr_row, N[i]->rows());
         curr_row += N[i]->rows();
     } 
+
+    // Fullfill dependencies 
+    if (this->ilvl >= skip && this->ilvl < nlevels-2  && this->tol != 0){
+        for (auto edge:c->edgesOut){
+            if (edge->n2 != c){
+                if (edge->n2 == n) scale_geqrf_tf->fulfill_promise(n); // Scale GEQRF
+                else scale_larfb_trsm_tf->fulfill_promise({edge->n2, n});
+            }
+        }
+    }
     return 0;
 }
 /* Scaling */
 void ParTree::geqrf_cluster(Cluster* c){
-    if (!want_sparsify(c)) return;
-
     Edge* e = c->self_edge();
     assert(e != nullptr);
     MatrixXd Q = *(e->A21);
@@ -201,7 +208,6 @@ void ParTree::geqrf_cluster(Cluster* c){
     c->set_Ts(T);
     c->set_taus(t);
 }
-
 
 void ParTree::trsm_edge(Edge* e){ // Applied on edgesOut of the cluster being scaled
     Cluster* c = e->n1; 
@@ -282,6 +288,8 @@ void ParTree::sparsify_rrqr_only(Cluster* c){
 
 int ParTree::factorize(){
 	auto fstart = systime();
+    assert(this->scale==1);
+
     for (this->ilvl=0; this->ilvl < nlevels; ++ilvl){
         auto lvl0 = systime();
     	int ttor_threads = this->n_threads;
@@ -301,6 +309,9 @@ int ParTree::factorize(){
             // Threadpool
             Threadpool_shared tp(this->n_threads, verb, "get_spars_");
             Taskflow<Cluster*> get_sparsity_tf(&tp, verb);
+            Taskflow<pCluster2> fillin_tf(&tp, verb);
+            Taskflow<Edge*> addEdgeIn_tf(&tp, verb);
+
 
             get_sparsity_tf.set_mapping([&] (Cluster* c){
                     return c->get_order()%ttor_threads; 
@@ -311,11 +322,65 @@ int ParTree::factorize(){
                 .set_task([&] (Cluster* c) {
                     this->get_sparsity(c);
                 })
+                .set_fulfill([&] (Cluster* c){
+                    for (auto n: c->rsparsity){
+                        if (!(n->is_eliminated())) fillin_tf.fulfill_promise({c,n});
+                    }
+                })
                 .set_name([](Cluster* c) {
                     return "get_sparsity_" + to_string(c->get_order());
                 })
                 .set_priority([&](Cluster*) {
                     return 6;
+                });
+
+            fillin_tf.set_mapping([&] (pCluster2 cn){
+                    return cn[1]->get_order()%ttor_threads; // Important to avoid race conditions 
+                })
+                .set_indegree([](pCluster2 cn){
+                    return 1;  // get_sparsity on c
+                })
+                .set_task([&] (pCluster2 cn) {
+                    if (verb) cout << cn[0]->get_id() << " " << cn[1]->get_id() << endl;
+                    alloc_fillin(cn[0], cn[1], &addEdgeIn_tf);
+                })
+                .set_binding([] (pCluster2) {
+                    return true;
+                })
+                .set_name([](pCluster2 cn) {
+                    return "fillin_" + to_string(cn[0]->get_order()) + "_" + to_string(cn[1]->get_order());
+                })
+                .set_priority([&](pCluster2) {
+                    return 7;
+                });
+
+            // Fill-in edges 
+            addEdgeIn_tf.set_mapping([&] (Edge* e){
+                    return e->n2->get_order()%ttor_threads; // Mapping matters to avoid race conditions -- IMPORTANT
+                })
+                .set_binding([] (Edge*) {
+                    return true;
+                })
+                .set_indegree([](Edge*){
+                    return 1;
+                })
+                .set_task([&] (Edge* e) { // Will work because of binding set to true
+                    Cluster* c1 = e->n1;
+                    Cluster* c2 = e->n2;
+                    // Sufficient to check only in edgeInFillin struct
+                    auto found = find_if(c2->edgesInFillin.begin(), c2->edgesInFillin.end(), [&c1](Edge* in_edge){return in_edge->n1 == c1;});
+                    if (found == c2->edgesInFillin.end()){
+                        c2->add_edgeInFillin(e);
+                        if (c1->get_level()>this->ilvl && c2->get_level()>this->ilvl && c1 != c2){
+                            c2->add_edge_spars_in(e);
+                        }
+                    }
+                })
+                .set_name([](Edge* e) {
+                    return "addEdgeIn_" + to_string(e->n1->get_order())+"_"+to_string(e->n2->get_order());
+                })
+                .set_priority([&](Edge* ) {
+                    return 7;
                 });
 
             // Get rsparsity for the clusters to be eliminated next
@@ -334,9 +399,15 @@ int ParTree::factorize(){
         {
             // Threadpool
             Threadpool_shared tp(this->n_threads, verb, "elmn_");
+            /* Elimination */
             Taskflow<Cluster*> elmn_house_tf(&tp, verb);
-            Taskflow<Edge*> addEdgeIn_tf(&tp, verb);
             Taskflow<pCluster2> elmn_applyQ_tf(&tp, verb);
+            /* Scale */
+            Taskflow<Cluster*> scale_geqrf_tf(&tp, verb);
+            Taskflow<pCluster2> scale_larfb_trsm_tf(&tp, verb);
+            /* Sparsify */
+            Taskflow<Cluster*> sparsify_rrqr_tf(&tp, verb);
+            Taskflow<pCluster2> sparsify_larfb_tf(&tp, verb);
 
             Logger log(10000000); 
             
@@ -376,7 +447,7 @@ int ParTree::factorize(){
                 })
                 .set_task([&] (pCluster2 cn) {
                     if (verb) cout << cn[0]->get_id() << " " << cn[1]->get_id() << endl;
-                    update_cluster(cn[0], cn[1], &addEdgeIn_tf);
+                    update_cluster(cn[0], cn[1], &scale_geqrf_tf, &scale_larfb_trsm_tf);
                 })
                 .set_binding([] (pCluster2) {
                     return true;
@@ -388,85 +459,18 @@ int ParTree::factorize(){
                     return 7;
                 });
 
-            addEdgeIn_tf.set_mapping([&] (Edge* e){
-                    return e->n2->get_order()%ttor_threads; // Mapping matters to avoid race conditions -- IMPORTANT
-                })
-                .set_binding([] (Edge*) {
-                    return true;
-                })
-                .set_indegree([](Edge*){
-                    return 1;
-                })
-                .set_task([&] (Edge* e) { // Will work because of binding set to true
-                    Cluster* c1 = e->n1;
-                    Cluster* c2 = e->n2;
-                    auto found = find_if(c2->edgesIn.begin(), c2->edgesIn.end(), [&c1](Edge* in_edge){return in_edge->n1 == c1;});
-                    if (found == c2->edgesIn.end()){
-                        c2->add_edgeIn(e);
-                        if (c1->get_level()>this->ilvl && c2->get_level()>this->ilvl && c1 != c2){
-                            c2->add_edge_spars_in(e);
-                        }
-                    }
-                    
-                })
-                .set_name([](Edge* e) {
-                    return "addEdgeIn_" + to_string(e->n1->get_order())+"_"+to_string(e->n2->get_order());
-                })
-                .set_priority([&](Edge* ) {
-                    return 7;
-                });
-            // Eliminate interiors
-            estart = systime();
-            {
-                for (auto self: this->interiors_current()){ 
-                    elmn_house_tf.fulfill_promise(self);
-                }
-            }
-            tp.join();
-            eend = systime();
-
-            auto log0 = systime();
-            if (this->ttor_log){
-                std::ofstream logfile;
-                std::string filename = "./logs/elmn_" + to_string(this->ilvl) + ".log." + to_string(0);
-                if(this->verb) printf("  Level %d logger saved to %s\n", this->ilvl, filename.c_str());
-                logfile.open(filename);
-                logfile << log;
-                logfile.close();
-            }
-            auto log1 = systime();
-            // cout << "Time to setup_: " << elapsed(tp0,tp1) << endl;
-            // cout << "Time to elmn_: " << elapsed(estart,eend) << endl;
-            // cout << "Time to write to file elmn_: " << elapsed(log0,log1) << endl;
-        }
-
-        // Scaling and Sparsification
-        if (this->ilvl >= skip && this->ilvl < nlevels-2  && this->tol != 0){
-            assert(this->scale==1);
-            Threadpool_shared tp(this->n_threads, verb, "sparsify_");
-            /* Scale */
-            Taskflow<Cluster*> scale_geqrf_tf(&tp, verb);
-            Taskflow<pCluster2> scale_larfb_trsm_tf(&tp, verb);
-            /* Sparsify */
-            Taskflow<Cluster*> sparsify_rrqr_tf(&tp, verb);
-            Taskflow<pCluster2> sparsify_larfb_tf(&tp, verb);
-
-            Logger log(10000000); 
-            if (this->ttor_log){
-                // log = Logger(10000000);
-                tp.set_logger(&log);
-            }
-
-
             /* Scaling */
             scale_geqrf_tf.set_mapping([&] (Cluster* c){
                     return c->get_order()%ttor_threads; 
                 })
-                .set_indegree([](Cluster*){
-                    return 1;
+                .set_indegree([&](Cluster* c){
+                    if (c->self_edge()->interior_deps==0) return (unsigned long)1;
+                    return c->self_edge()->interior_deps;
                 })
                 .set_task([&] (Cluster* c) {
-                    geqrf_cluster(c);
+                    // Combine edgesIn and edgesInFillin
+                    c->combine_edgesIn();
+                    if(want_sparsify(c)) geqrf_cluster(c);
                 })
                 .set_fulfill([&] (Cluster* c){
                     // Fulfill these even for clusters that are not sparsified
@@ -492,8 +496,20 @@ int ParTree::factorize(){
             scale_larfb_trsm_tf.set_mapping([&] (pCluster2 cn){
                     return (cn[0]->get_order() + cn[1]->get_order())%ttor_threads;  
                 })
-                .set_indegree([](pCluster2){
-                    return 2; // the geqrf on clusters c and n
+                .set_indegree([](pCluster2 cn){
+                    Cluster* c = cn[0];
+                    Cluster* n = cn[1]; 
+                    // Find the edge containing A_cn block -- should exist 
+                    
+                    // It can either exist in n->edgesOut or in c->edgesIn at this point
+                    // depending on if the first dependency is satisfied by update_cluster(n) or scale_geqrf(c)
+                    // The edge will exist in both by the time the task is ready to be executed
+                    auto found = find_if(n->edgesOut.begin(), n->edgesOut.end(), [&c](Edge* e){return e->n2==c;});
+                    if (found == n->edgesOut.end()) {
+                        found = find_if(c->edgesIn.begin(), c->edgesIn.end(), [&n](Edge* e){return e->n1==n;});
+                        assert(found != c->edgesIn.end());
+                    }
+                    return 2+ (*found)->interior_deps; // the geqrf on clusters c and n + updates on cn from interior elmn
                 })
                 .set_task([&] (pCluster2 cn) {
                     Cluster* c = cn[0];
@@ -578,15 +594,22 @@ int ParTree::factorize(){
                     return 3;
                 });
 
-            // Scale and sparsify interfaces
-            spstart = systime();
+            // Eliminate interiors
+            estart = systime();
             {
+                for (auto self: this->interiors_current()){ 
+                    elmn_house_tf.fulfill_promise(self);
+                }
+
                 for (auto self: this->interfaces_current()){ 
-                    scale_geqrf_tf.fulfill_promise(self);
+                    if (self->self_edge()->interior_deps == 0){
+                        // cout << self->get_id() << endl;
+                        scale_geqrf_tf.fulfill_promise(self);
+                    }
                 }
             }
             tp.join();
-            spend = systime();
+            eend = systime();
 
             auto log0 = systime();
             if (this->ttor_log){
@@ -598,10 +621,43 @@ int ParTree::factorize(){
                 logfile.close();
             }
             auto log1 = systime();
-
-            // cout << "Time to write to file sparsify_: " << elapsed(log0,log1) << endl;
-
         }
+
+        // Merge
+        // {
+        //     this->current_bottom++;
+        //     Threadpool_shared tp(this->n_threads, verb, "merge_");
+        //     Taskflow<Cluster*> update_sizes_tf(&tp, verb);
+        //     Taskflow<pCluster2> update_edges_tf(&tp, verb);
+            
+
+        //     Logger log(10000000); 
+        //     if (this->ttor_log){
+        //         tp.set_logger(&log);
+        //     }
+
+
+        //     /* Scaling */
+        //     update_sizes_tf.set_mapping([&] (Cluster* c){
+        //             return c->get_order()%ttor_threads; 
+        //         })
+        //         .set_indegree([](Cluster*){
+        //             return 1;
+        //         })
+        //         .set_task([&] (Cluster* c) {
+        //             parent_edges(c);
+        //         })
+        //         .set_fulfill([&] (Cluster* c){
+                    
+        //         })
+        //         .set_name([](Cluster* c) {
+        //             return "scale_geqrf_" + to_string(c->get_order());
+        //         })
+        //         .set_priority([&](Cluster*) {
+        //             return 5;
+        //         });
+
+        // }
 
         // Keep merge sequential for now
         auto mstart = systime();
@@ -619,7 +675,7 @@ int ParTree::factorize(){
              << "elmn: " <<   elapsed(estart,eend) << "  "
         //      << "shift: " <<  elapsed(shstart,shend) << "  "
              // << "scale: " << elapsed(scstart,scend) << "  "
-             << "sprsfy: " << elapsed(spstart,spend) << "  "
+             // << "sprsfy: " << elapsed(spstart,spend) << "  "
              << "merge: " << elapsed(mstart,mend) << "  " 
              << "Time per level: " << elapsed(lvl0,lvl1) << " "
         //      << "size top_sep: " <<  get<0>(topsize()) << ", " << get<1>(topsize()) << "   "
@@ -634,6 +690,9 @@ int ParTree::factorize(){
 }
 
 
+/**
+ * Solve
+ **/
 void ParTree::QR_fwd(Cluster* c) const{
     MatrixXd* Q = c->get_Q();
     VectorXd xc = VectorXd::Zero(Q->rows());

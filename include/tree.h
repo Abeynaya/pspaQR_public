@@ -56,6 +56,7 @@ class Tree{
         std::vector<std::list<Cluster*>> interiors; //interiors.size() = nlevels
         std::vector<std::list<Cluster*>> interfaces; // interfaces.size() = nlevels
         std::vector<std::list<Cluster*>> interfaces2sparsify; // interfaces2sparsify.size() = nlevels
+        std::vector<std::list<Cluster*>> interfaces_no_sparsify; // interfaces_no_sparsify.size() = nlevels
 
         std::vector<std::list<Cluster*>> fine; // list of fine nodes
 
@@ -93,6 +94,7 @@ class Tree{
         const std::list<Cluster*>& interiors_current() const {return interiors[current_bottom];};
         const std::list<Cluster*>& interfaces_current() const {return interfaces[current_bottom];};
         const std::list<Cluster*>& interfaces2sparsify_current() const {return interfaces2sparsify[current_bottom];};
+        const std::list<Cluster*>& interfaces_no_sparsify_current() const {return interfaces_no_sparsify[current_bottom];};
 
         const std::list<Cluster*>& bottom_original() const {return bottoms[0];};
 
@@ -122,6 +124,7 @@ class Tree{
                             interiors = std::vector<std::list<Cluster*>>(nlevels);
                             interfaces = std::vector<std::list<Cluster*>>(nlevels);
                             interfaces2sparsify = std::vector<std::list<Cluster*>>(nlevels);
+                            interfaces_no_sparsify = std::vector<std::list<Cluster*>>(nlevels);
                             fine = std::vector<std::list<Cluster*>>(nlevels);
                             Xcoo = nullptr;
                             profile = Profile(lvls, skip_);
