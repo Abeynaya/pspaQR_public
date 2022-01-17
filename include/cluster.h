@@ -8,6 +8,7 @@
 #include <list>
 #include <set>
 #include <tuple>
+#include <unordered_map>
 #include <assert.h>
 
 #include "util.h"
@@ -173,7 +174,6 @@ public:
     std::vector<Cluster*> children;
     std::set<Cluster*> rsparsity; 
 
-
     std::set<Cluster*> cnbrs; // neigbors including self
     std::set<Cluster*> rnbrs; // neigbors including self
     std::list<Edge*> edgesOut;
@@ -183,6 +183,7 @@ public:
 
     std::list<Edge*> edgesOutNbrSparsification;
     std::list<Edge*> edgesInNbrSparsification;
+    std::unordered_map<int, std::list<Edge*>> interiors2edges; // use unordered_map instead of map -- makes a significant difference
 
     /* Solution to A' xt=b */
     Eigen::VectorXd* xt = nullptr; // A'xt = b

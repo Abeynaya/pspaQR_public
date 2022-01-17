@@ -42,9 +42,8 @@ private:
 	int ttor_log; // For ttor logging and profiling
 
 	// Methods needed for elimination
-	void setup_fillin(Cluster*, Cluster*, ttor::Taskflow<pEdge2>*);
 	void alloc_fillin(Cluster*, Cluster*, ttor::Taskflow<Edge*>*);
-	int update_cluster(Cluster*, Cluster*, ttor::Taskflow<Cluster*>*, ttor::Taskflow<pCluster2>*);
+	int update_cluster(Cluster*, Cluster*, ttor::Taskflow<Cluster*>*, ttor::Taskflow<Edge*>*);
 	int house(Cluster*);
 
 	// Methods for Scaling
