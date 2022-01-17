@@ -30,8 +30,8 @@
 
 typedef Eigen::SparseMatrix<double, 0, int> SpMat;
 
-typedef array<Edge*,2> pEdge2;
-typedef array<Cluster*,2> pCluster2;
+typedef std::array<Edge*,2> pEdge2;
+typedef std::array<Cluster*,2> pCluster2;
 
 
 class ParTree: public Tree
