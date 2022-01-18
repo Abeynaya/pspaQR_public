@@ -183,7 +183,7 @@ public:
 
     std::list<Edge*> edgesOutNbrSparsification;
     std::list<Edge*> edgesInNbrSparsification;
-    std::unordered_map<int, std::list<Edge*>> interiors2edges; // use unordered_map instead of map -- makes a significant difference
+    // std::unordered_map<int, std::list<Edge*>> interiors2edges; // use unordered_map instead of map -- makes a significant difference
 
     /* Solution to A' xt=b */
     Eigen::VectorXd* xt = nullptr; // A'xt = b

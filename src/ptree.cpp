@@ -52,7 +52,6 @@ Edge* ParTree::new_edgeOutFillin(Cluster* c1, Cluster* c2){
 }
 
 void ParTree::alloc_fillin(Cluster* c, Cluster* n, Taskflow<Edge*>* add_edge_tf){
-    list<Edge*> n_edges;
     for (auto edge: c->edgesOut){
         Cluster* nbr_c = edge->n2; 
         auto found_out = find_if(n->edgesOut.begin(), n->edgesOut.end(), [&nbr_c](Edge* e){return (e->n2 == nbr_c );});
@@ -63,19 +62,15 @@ void ParTree::alloc_fillin(Cluster* c, Cluster* n, Taskflow<Edge*>* add_edge_tf)
                 Edge* ecn = new_edgeOutFillin(n, nbr_c);
                 ecn->interior_deps++;
                 add_edge_tf->fulfill_promise(ecn); // add edgeInFillin
-                n_edges.push_back(ecn);
             }
             else {
                 (*found_fillin)->interior_deps++;
-                n_edges.push_back(*found_fillin);
             }
         }
         else {
             (*found_out)->interior_deps++;
-            n_edges.push_back(*found_out);
         }
     }
-    n->interiors2edges[c->get_order()] = n_edges;
     return;
 }
 
@@ -125,19 +120,21 @@ int ParTree::house(Cluster* c){
 // Update Q^T A after householder on interiors
 int ParTree::update_cluster(Cluster* c, Cluster* n, Taskflow<Cluster*>* scale_geqrf_tf, Taskflow<Edge*>* scale_larfb_trsm_tf){
     n->combine_edgesOut();
-    // Get all the edges that will be modified
-    auto n_edges = n->interiors2edges[c->get_order()];
-
+    list<Edge*> n_edges;
     // Concatenate to get the matrix V so that V <- Q^T V
-    vector<MatrixXd*> N(n_edges.size());
+    vector<MatrixXd*> N;
     MatrixXd V(c->get_Q()->rows(), n->cols());
     int curr_row = 0;
-    int count=0;
-    for (auto ecn: n_edges){
-        N[count]=ecn->A21;
+
+    for (auto edge: c->edgesOut){
+        Cluster* nbr_c = edge->n2; 
+        auto found_out = find_if(n->edgesOut.begin(), n->edgesOut.end(), [&nbr_c](Edge* e){return (e->n2 == nbr_c );});
+        assert(found_out != n->edgesOut.end()); // Fill-in allocated already
+        Edge* ecn = *(found_out);
+        n_edges.push_back(ecn);
+        N.push_back(ecn->A21);
         V.middleRows(curr_row, ecn->A21->rows()) = *ecn->A21; 
         curr_row += ecn->A21->rows();  
-        count++;
     }
 
     // Compute V = Q^T V
@@ -152,7 +149,7 @@ int ParTree::update_cluster(Cluster* c, Cluster* n, Taskflow<Cluster*>* scale_ge
 
     // Fullfill dependencies 
     if (this->ilvl >= skip && this->ilvl < nlevels-2  && this->tol != 0){
-        for (auto edge: n_edges){
+        for (auto edge:n_edges){ // order doesn't matter
             if (edge->n2 != c){
                 if (edge->n2 == n) scale_geqrf_tf->fulfill_promise(n); // Scale GEQRF
                 else scale_larfb_trsm_tf->fulfill_promise(edge);
@@ -448,7 +445,7 @@ int ParTree::factorize(){
                     if(want_sparsify(c)) geqrf_cluster(c);
                 })
                 .set_fulfill([&] (Cluster* c){
-                    // Fulfill these even for clusters that are not sparsified
+                    // Fulfill these even for clusters that are not sparsified -- important
                     // Apply ormqr to rows and cols
                     for (auto ein: c->edgesInNbrSparsification){
                         scale_larfb_trsm_tf.fulfill_promise(ein);
@@ -503,7 +500,7 @@ int ParTree::factorize(){
                 })
                 .set_task([&] (Cluster* c) {
                     if(verb) cout << "sparsify_rrqr_tf_" << c->get_id() << endl;
-                    sparsify_rrqr_only(c);
+                    if(want_sparsify(c)) sparsify_rrqr_only(c);
                 })
                 .set_fulfill([&] (Cluster* c){
                     // Apply ormqr to rows and cols

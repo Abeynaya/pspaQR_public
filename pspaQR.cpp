@@ -279,7 +279,7 @@ int main(int argc, char* argv[]){
     {
          // Random b
         {
-            VectorXd b = random(nrows, 2021);
+            VectorXd b = random(nrows, 2020);
             VectorXd bcopy = b;
             VectorXd x(ncols, 1);
             x.setZero();
