@@ -178,6 +178,34 @@ void ParTree::geqrf_cluster(Cluster* c){
     c->set_taus(t);
 }
 
+/* Merge */
+void ParTree::compute_new_edges(Cluster* snew, Taskflow<Edge*>* add_edge_tf){
+    set<Cluster*> edges_merged;
+    for (auto sold: snew->children){
+        for (auto eold : sold->edgesOut){
+            auto n = eold->n2; 
+            if (!(n->is_eliminated())){
+                assert(n->get_parent() != nullptr);
+                snew->cnbrs.insert(n->get_parent());
+            }
+        }
+    }
+    
+    // Allocate memory and create new edges
+    for (auto n: snew->cnbrs){
+        Edge* e = new_edgeOut(snew, n);
+        if (snew==n){
+            snew->add_self_edge(e);
+        }
+        else{ // snew != n
+            add_edge_tf->fulfill_promise(e);
+        }
+    }
+
+    // Sort edges
+    snew->sort_edgesOut();
+}
+
 void ParTree::trsm_edge(Edge* e){ // Applied on edgesOut of the cluster being scaled
     Cluster* c = e->n1; 
     MatrixXd R = c->get_Qs()->topRows(c->cols()).triangularView<Upper>();
@@ -261,7 +289,7 @@ void ParTree::sparsify_rrqr_only(Cluster* c){
 int ParTree::factorize(){
 	auto fstart = systime();
     assert(this->scale==1);
-
+    cout << "Lvl| " << "Fillin| " <<  "Sprsfy| " << "Merge| " << "Total| " <<  "  s_top " << endl;
     for (this->ilvl=0; this->ilvl < nlevels; ++ilvl){
         auto lvl0 = systime();
     	int ttor_threads = this->n_threads;
@@ -273,10 +301,11 @@ int ParTree::factorize(){
         #endif
         if (verb) printf("  Threads count: total %d, ttor %d, BLAS %d\n", this->n_threads, ttor_threads, blas_threads);
 
-        timeval vstart, vend, estart, eend;
+        timeval vstart, vend, estart, eend, mstart, mend;
         // Initializing it incase sparsification is skipped
         timeval spstart=systime();
         timeval spend=spstart;
+        // Find fill-in and allocate memory
         {
             // Threadpool
             Threadpool_shared tp(this->n_threads, verb, "get_spars_");
@@ -367,7 +396,7 @@ int ParTree::factorize(){
             vend = systime();
 
         }
-
+        // Eliminate, Scale and Sparsify
         {
             // Threadpool
             Threadpool_shared tp(this->n_threads, verb, "elmn_");
@@ -572,61 +601,142 @@ int ParTree::factorize(){
         }
 
         // Merge
-        // {
-        //     this->current_bottom++;
-        //     Threadpool_shared tp(this->n_threads, verb, "merge_");
-        //     Taskflow<Cluster*> update_sizes_tf(&tp, verb);
-        //     Taskflow<pCluster2> update_edges_tf(&tp, verb);
+        mstart = systime();
+        if (this->ilvl < nlevels-1)
+        {
+            this->current_bottom++;
+            // Update sizes -- sequential because we need a synch point after this and this is cheap
+            for (auto snew: this->bottom_current()){
+                int rsize = 0;
+                int csize = 0;
+                for (auto sold: snew->children){
+                    sold->rposparent = rsize;
+                    sold->cposparent = csize;
+                    rsize += sold->rows();
+                    csize += sold->cols();
+                }
+                snew->set_size(rsize, csize); 
+                snew->set_org(rsize, csize);
+            }
+
+            // Update edges
+            Threadpool_shared tp(this->n_threads, verb, "merge_");
+            Taskflow<Cluster*> update_edges_tf(&tp, verb);
+            Taskflow<Edge*> addEdgeIn_tf(&tp, verb);
+            Taskflow<Edge*> fill_edges_tf(&tp, verb);
             
+            Logger log(10000000); 
+            if (this->ttor_log){
+                tp.set_logger(&log);
+            }
 
-        //     Logger log(10000000); 
-        //     if (this->ttor_log){
-        //         tp.set_logger(&log);
-        //     }
+            /* Scaling */
+            update_edges_tf.set_mapping([&] (Cluster* c){
+                    return c->get_order()%ttor_threads; 
+                })
+                .set_indegree([](Cluster*){
+                    return 1;
+                })
+                .set_task([&] (Cluster* c) {
+                    compute_new_edges(c, &addEdgeIn_tf);
+                })
+                .set_fulfill([&] (Cluster* c){
+                    // Fill edges, delete previous edges
+                    for (auto sold: c->children){
+                        for (auto eold: sold->edgesOut){
+                            if (!eold->n2->is_eliminated()) fill_edges_tf.fulfill_promise(eold);
+                        }
+                    }
+                })
+                .set_name([](Cluster* c) {
+                    return "update_edges_" + to_string(c->get_order());
+                })
+                .set_priority([&](Cluster*) {
+                    return 5;
+                });
 
 
-        //     /* Scaling */
-        //     update_sizes_tf.set_mapping([&] (Cluster* c){
-        //             return c->get_order()%ttor_threads; 
-        //         })
-        //         .set_indegree([](Cluster*){
-        //             return 1;
-        //         })
-        //         .set_task([&] (Cluster* c) {
-        //             parent_edges(c);
-        //         })
-        //         .set_fulfill([&] (Cluster* c){
-                    
-        //         })
-        //         .set_name([](Cluster* c) {
-        //             return "scale_geqrf_" + to_string(c->get_order());
-        //         })
-        //         .set_priority([&](Cluster*) {
-        //             return 5;
-        //         });
+            fill_edges_tf.set_mapping([&] (Edge* e){
+                return (e->n1->get_order() + e->n2->get_order())%ttor_threads;  
+            })
+            .set_indegree([](Edge* e){ 
+                return 1;
+            })
+            .set_task([&] (Edge* e) {
+                auto nold = e->n2;
+                auto sold = e->n1;
+                auto nnew = nold->get_parent();
+                auto snew = e->n1->get_parent();
+                auto found = find_if(snew->edgesOut.begin(), snew->edgesOut.end(), [&nnew](Edge* enew){return enew->n2 == nnew;});
+                assert(found != snew->edgesOut.end());  // Must have the edge
+                assert(e->A21 != nullptr);
+                assert(e->A21->rows() == nold->rows());
+                (*found)->A21->block(nold->rposparent, sold->cposparent, nold->rows(), sold->cols()) = *(e->A21);
+                delete e->A21; // makes it a nullptr
+               
+            })
+            .set_name([](Edge* e) {
+                return "fill_edges_" + to_string(e->n1->get_order())+ "_" + to_string(e->n2->get_order());
+            })
+            .set_priority([&](Edge*) {
+                return 4;
+            });
 
-        // }
+            // Add in new edges 
+            addEdgeIn_tf.set_mapping([&] (Edge* e){
+                    return e->n2->get_order()%ttor_threads; // Mapping matters to avoid race conditions -- IMPORTANT
+                })
+                .set_binding([] (Edge*) {
+                    return true;
+                })
+                .set_indegree([](Edge*){
+                    return 1;
+                })
+                .set_task([&] (Edge* e) { // Will work because of binding set to true
+                    Cluster* c1 = e->n1;
+                    Cluster* c2 = e->n2;
+                    // No need to check if edge is present -- it will not be present for sure
+                    c2->add_edgeIn(e);
+                    if (c1->get_level()>this->current_bottom && c2->get_level()>this->current_bottom && c1 != c2){
+                        c2->add_edge_spars_in(e);
+                    }
+                })
+                .set_name([](Edge* e) {
+                    return "addEdgeIn_" + to_string(e->n1->get_order())+"_"+to_string(e->n2->get_order());
+                })
+                .set_priority([&](Edge* ) {
+                    return 6;
+                });
+
+            for (auto snew: this->bottom_current()){
+                update_edges_tf.fulfill_promise(snew);
+            }
+            tp.join();
+
+        }
+        mend = systime();
+
 
         // Keep merge sequential for now
-        auto mstart = systime();
-        {   
-            if (this-> ilvl < nlevels-1){
-                merge_all();
-            }
-        }
-        auto mend = systime();
+        // auto mstart = systime();
+        // {   
+        //     if (this-> ilvl < nlevels-1){
+        //         merge_all();
+        //     }
+        // }
+        // auto mend = systime();
         auto lvl1 = systime();
 
-        cout << "lvl: " << ilvl << "    " ;  
+        cout << ilvl << "    " ;  
         cout << fixed << setprecision(3)  
-             << "find fill-in: " <<   elapsed(vstart,vend) << "  "
-             << "elmn: " <<   elapsed(estart,eend) << "  "
+             <<  elapsed(vstart,vend) << "   "
+             <<  elapsed(estart,eend) << "   "
         //      << "shift: " <<  elapsed(shstart,shend) << "  "
              // << "scale: " << elapsed(scstart,scend) << "  "
              // << "sprsfy: " << elapsed(spstart,spend) << "  "
-             << "merge: " << elapsed(mstart,mend) << "  " 
-             << "Time per level: " << elapsed(lvl0,lvl1) << " "
-        //      << "size top_sep: " <<  get<0>(topsize()) << ", " << get<1>(topsize()) << "   "
+             <<  elapsed(mstart,mend) << "  " 
+             <<  elapsed(lvl0,lvl1) << "  ("
+             <<  get<0>(topsize()) << ", " << get<1>(topsize()) << ")   "
         //      << "a.r top_sep: " << (double)get<0>(topsize())/(double)get<1>(topsize()) 
              << endl;
     }

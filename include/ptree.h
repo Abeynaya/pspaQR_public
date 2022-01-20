@@ -55,6 +55,9 @@ private:
 	int n_deps_sparsification(Cluster*);
 	void sparsify_rrqr_only(Cluster*);
 
+	// Merge
+	void compute_new_edges(Cluster*, ttor::Taskflow<Edge*>*);
+
 	// Methods for solve
 	void QR_fwd(Cluster*) const;
 	void QR_bwd(Cluster*) const;
@@ -78,9 +81,6 @@ public:
 	// Add new edge 
 	Edge* new_edgeOut(Cluster*, Cluster*);
 	Edge* new_edgeOutFillin(Cluster*, Cluster*);
-
-
-	
 
 	int factorize();
 	void solve(Eigen::VectorXd b, Eigen::VectorXd& x) const;
