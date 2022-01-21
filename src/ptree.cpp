@@ -632,22 +632,37 @@ int ParTree::factorize(){
 
             /* Scaling */
             update_edges_tf.set_mapping([&] (Cluster* c){
-                    return c->get_order()%ttor_threads; 
+                    return (c->get_order()+1)%ttor_threads; 
                 })
                 .set_indegree([](Cluster*){
                     return 1;
                 })
                 .set_task([&] (Cluster* c) {
                     compute_new_edges(c, &addEdgeIn_tf);
-                })
-                .set_fulfill([&] (Cluster* c){
                     // Fill edges, delete previous edges
                     for (auto sold: c->children){
                         for (auto eold: sold->edgesOut){
-                            if (!eold->n2->is_eliminated()) fill_edges_tf.fulfill_promise(eold);
+                            // if (!eold->n2->is_eliminated()) fill_edges_tf.fulfill_promise(eold);
+                            auto nold = eold->n2;
+
+                            if (!(nold->is_eliminated())){
+                                auto nnew = nold->get_parent();
+                                auto found = find_if(c->edgesOut.begin(), c->edgesOut.end(), [&nnew](Edge* e){return e->n2 == nnew;});
+                                assert(found != c->edgesOut.end());  // Must have the edge
+
+                                assert(eold->A21 != nullptr);
+                                assert(eold->A21->rows() == nold->rows());
+                                assert(eold->A21->cols() == sold->cols());
+
+                                (*found)->A21->block(nold->rposparent, sold->cposparent, nold->rows(), sold->cols()) = *(eold->A21);
+                                delete eold; // just makes it a nullptr, so this is safe to do in the loop 
+                            }
                         }
                     }
                 })
+                // .set_fulfill([&] (Cluster* c){
+                    
+                // })
                 .set_name([](Cluster* c) {
                     return "update_edges_" + to_string(c->get_order());
                 })
@@ -684,7 +699,7 @@ int ParTree::factorize(){
 
             // Add in new edges 
             addEdgeIn_tf.set_mapping([&] (Edge* e){
-                    return e->n2->get_order()%ttor_threads; // Mapping matters to avoid race conditions -- IMPORTANT
+                    return (e->n2->get_order())%ttor_threads; // Mapping matters to avoid race conditions -- IMPORTANT
                 })
                 .set_binding([] (Edge*) {
                     return true;
@@ -713,18 +728,20 @@ int ParTree::factorize(){
             }
             tp.join();
 
+            auto log0 = systime();
+            if (this->ttor_log){
+                cout << "merge log " << endl;
+                std::ofstream logfile;
+                std::string filename = "./logs/merge_" + to_string(this->ilvl) + ".log." + to_string(0);
+                if(this->verb) printf("  Level %d logger saved to %s\n", this->ilvl, filename.c_str());
+                logfile.open(filename);
+                logfile << log;
+                logfile.close();
+            }
+            auto log1 = systime();
+
         }
         mend = systime();
-
-
-        // Keep merge sequential for now
-        // auto mstart = systime();
-        // {   
-        //     if (this-> ilvl < nlevels-1){
-        //         merge_all();
-        //     }
-        // }
-        // auto mend = systime();
         auto lvl1 = systime();
 
         cout << ilvl << "    " ;  
@@ -739,6 +756,8 @@ int ParTree::factorize(){
              <<  get<0>(topsize()) << ", " << get<1>(topsize()) << ")   "
         //      << "a.r top_sep: " << (double)get<0>(topsize())/(double)get<1>(topsize()) 
              << endl;
+
+        
     }
     auto fend = systime();
     cout << "Tolerance set: " << scientific << this->tol << endl;
