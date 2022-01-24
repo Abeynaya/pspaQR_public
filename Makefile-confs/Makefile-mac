@@ -8,9 +8,13 @@ CC = g++
 ifeq ($(USE_MKL),1)
     BLASDIR  = /opt/intel/mkl/include/
     BLASLIB  = /opt/intel/mkl/lib/
+	BLAS_SEQ_LIBS   = -Wl,-rpath,$(BLASLIB) -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -lpthread -lm -ldl
+	BLAS_PAR_LIBS   = -Wl,-rpath,$(BLASLIB) -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -lpthread -lm -ldl
 else
     BLASDIR  = /usr/local/opt/openblas/include/
 	BLASLIB  = /usr/local/opt/openblas/lib/
+	BLAS_SEQ_LIBS   = -lopenblas -llapack
+	BLAS_PAR_LIBS   = -lopenblas -llapack
 endif
 
 ifeq ($(HSL_AVAIL),1)
