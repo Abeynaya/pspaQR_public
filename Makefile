@@ -32,9 +32,6 @@ endif
 #MKL or openblas
 ifeq ($(USE_MKL),1)
     CFLAGS += -DUSE_MKL -DEIGEN_USE_MKL_ALL
-    LDFLAGS += -Wl,-rpath,$(BLASLIB) -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -lpthread -lm -ldl
-else
-    LDFLAGS += -lopenblas -llapack
 endif
 
 #if HSL_MC64 routine is available
@@ -66,7 +63,7 @@ $(OBJDIR)/%.o: $(SRCDIR)/%.cpp $(DEPS)
 
 # Executables
 spaQR: pspaQR.cpp $(OBJ) $(TTOROBJ)
-	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS)  $(INCLUDE)  
+	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS) $(BLAS_PAR_LIBS) $(INCLUDE)  
 .PHONY: clean
 
 clean:

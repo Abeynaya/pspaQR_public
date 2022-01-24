@@ -204,6 +204,27 @@ void ParTree::compute_new_edges(Cluster* snew, Taskflow<Edge*>* add_edge_tf){
 
     // Sort edges
     snew->sort_edgesOut();
+
+    // Fill edges, delete previous edges
+    for (auto sold: snew->children){
+        for (auto eold: sold->edgesOut){
+            auto nold = eold->n2;
+
+            if (!(nold->is_eliminated())){
+                auto nnew = nold->get_parent();
+                auto found = find_if(snew->edgesOut.begin(), snew->edgesOut.end(), [&nnew](Edge* e){return e->n2 == nnew;});
+                assert(found != snew->edgesOut.end());  // Must have the edge
+
+                assert(eold->A21 != nullptr);
+                assert(eold->A21->rows() == nold->rows());
+                assert(eold->A21->cols() == sold->cols());
+
+                (*found)->A21->block(nold->rposparent, sold->cposparent, nold->rows(), sold->cols()) = *(eold->A21);
+                delete eold; // just makes it a nullptr, so this is safe to do in the loop 
+            }
+            
+        }
+    }
 }
 
 void ParTree::trsm_edge(Edge* e){ // Applied on edgesOut of the cluster being scaled
@@ -289,30 +310,46 @@ void ParTree::sparsify_rrqr_only(Cluster* c){
 int ParTree::factorize(){
 	auto fstart = systime();
     assert(this->scale==1);
-    cout << "Lvl| " << "Fillin| " <<  "Sprsfy| " << "Merge| " << "Total| " <<  "  s_top " << endl;
+    cout << "Lvl " << "Fillin " <<  "Sprsfy " << "Merge " << "Total " <<  "  s_top " << "Threads(b,t) "<< endl;
     for (this->ilvl=0; this->ilvl < nlevels; ++ilvl){
         auto lvl0 = systime();
-    	int ttor_threads = this->n_threads;
-        int blas_threads = this->n_threads / ttor_threads;
-        #ifdef USE_MKL
-        	mkl_set_num_threads(blas_threads);
-        #else
-        	openblas_set_num_threads(blas_threads);
-        #endif
-        if (verb) printf("  Threads count: total %d, ttor %d, BLAS %d\n", this->n_threads, ttor_threads, blas_threads);
-
         timeval vstart, vend, estart, eend, mstart, mend;
         // Initializing it incase sparsification is skipped
         timeval spstart=systime();
         timeval spend=spstart;
+
+        int blas_threads;
+        int ttor_threads;
+
         // Find fill-in and allocate memory
         {
+            blas_threads=1;
+            ttor_threads=n_threads;
+
+            {
+                auto t0 = wctime();
+                #ifdef USE_MKL
+                std::string kind = "MKL";
+                mkl_set_num_threads(blas_threads);
+                #else
+                std::string kind = "OpenBLAS";
+                openblas_set_num_threads(blas_threads);
+                #endif
+                auto t1 = wctime();
+                if(this->verb) printf("  n_threads %d, (kind %s, time %3.2e s.) => ttor threads %d, blas threads %d\n", n_threads, kind.c_str(), elapsed(t0, t1), ttor_threads, blas_threads);
+                assert(ttor_threads * blas_threads <= n_threads);
+            }
+
             // Threadpool
-            Threadpool_shared tp(this->n_threads, verb, "get_spars_");
+            Threadpool_shared tp(ttor_threads, verb, "fillin_");
             Taskflow<Cluster*> get_sparsity_tf(&tp, verb);
             Taskflow<pCluster2> fillin_tf(&tp, verb);
             Taskflow<Edge*> addEdgeIn_tf(&tp, verb);
 
+            Logger log(10000000); 
+            if (this->ttor_log){
+                tp.set_logger(&log);
+            }
 
             get_sparsity_tf.set_mapping([&] (Cluster* c){
                     return c->get_order()%ttor_threads; 
@@ -395,11 +432,40 @@ int ParTree::factorize(){
 
             vend = systime();
 
+            auto log0 = systime();
+            if (this->ttor_log){
+                std::ofstream logfile;
+                std::string filename = "./logs/fillin_" + to_string(this->ilvl) + ".log." + to_string(0);
+                if(this->verb) printf("  Level %d logger saved to %s\n", this->ilvl, filename.c_str());
+                logfile.open(filename);
+                logfile << log;
+                logfile.close();
+            }
+            auto log1 = systime();
+
         }
         // Eliminate, Scale and Sparsify
         {
+            // Count the number of sparsification tasks
+            const int real_tasks = this->interfaces_current().size();
+            const int tasks = std::max(real_tasks/4,1); // Make it more aggressive. Gives more threads to BLAS towards the end (it's very unbalanced anyway).
+                                                        // Otherwise we may divide by 0
+            assert(tasks > 0);
+
+            blas_threads = 1;
+            if(tasks > this->n_threads) {
+                blas_threads = 1;
+            } else {
+                blas_threads = this->n_threads / tasks;
+            }
+            assert(blas_threads > 0);
+            assert(blas_threads <= n_threads);
+            ttor_threads = n_threads / blas_threads;
+            assert(ttor_threads > 0);
+            assert(ttor_threads <= n_threads);
+
             // Threadpool
-            Threadpool_shared tp(this->n_threads, verb, "elmn_");
+            Threadpool_shared tp(ttor_threads, verb, "elmn_");
             /* Elimination */
             Taskflow<Cluster*> elmn_house_tf(&tp, verb);
             Taskflow<pCluster2> elmn_applyQ_tf(&tp, verb);
@@ -410,6 +476,20 @@ int ParTree::factorize(){
             Taskflow<Cluster*> sparsify_rrqr_tf(&tp, verb);
             Taskflow<Edge*> sparsify_larfb_tf(&tp, verb);
 
+            {
+                auto t0 = wctime();
+                #ifdef USE_MKL
+                std::string kind = "MKL";
+                mkl_set_num_threads(blas_threads);
+                #else
+                std::string kind = "OpenBLAS";
+                openblas_set_num_threads(blas_threads);
+                #endif
+                auto t1 = wctime();
+                if(this->verb) printf("  n_threads %d, spars tasks %d (real %d, kind %s, time %3.2e s.) => ttor threads %d, blas threads %d\n", n_threads, tasks, real_tasks, kind.c_str(), elapsed(t0, t1), ttor_threads, blas_threads);
+                assert(ttor_threads * blas_threads <= n_threads);
+            }
+
             Logger log(10000000); 
             
             if (this->ttor_log){
@@ -419,7 +499,7 @@ int ParTree::factorize(){
 
 
             elmn_house_tf.set_mapping([&] (Cluster* c){
-                    return c->get_order()%ttor_threads; 
+                    return (c->get_order()+1)%ttor_threads; 
                 })
                 .set_indegree([](Cluster*){
                     return 1;
@@ -620,7 +700,7 @@ int ParTree::factorize(){
             }
 
             // Update edges
-            Threadpool_shared tp(this->n_threads, verb, "merge_");
+            Threadpool_shared tp(n_threads, verb, "merge_");
             Taskflow<Cluster*> update_edges_tf(&tp, verb);
             Taskflow<Edge*> addEdgeIn_tf(&tp, verb);
             Taskflow<Edge*> fill_edges_tf(&tp, verb);
@@ -632,37 +712,14 @@ int ParTree::factorize(){
 
             /* Scaling */
             update_edges_tf.set_mapping([&] (Cluster* c){
-                    return (c->get_order()+1)%ttor_threads; 
+                    return (c->get_order()+1)%n_threads; 
                 })
                 .set_indegree([](Cluster*){
                     return 1;
                 })
                 .set_task([&] (Cluster* c) {
                     compute_new_edges(c, &addEdgeIn_tf);
-                    // Fill edges, delete previous edges
-                    for (auto sold: c->children){
-                        for (auto eold: sold->edgesOut){
-                            // if (!eold->n2->is_eliminated()) fill_edges_tf.fulfill_promise(eold);
-                            auto nold = eold->n2;
-
-                            if (!(nold->is_eliminated())){
-                                auto nnew = nold->get_parent();
-                                auto found = find_if(c->edgesOut.begin(), c->edgesOut.end(), [&nnew](Edge* e){return e->n2 == nnew;});
-                                assert(found != c->edgesOut.end());  // Must have the edge
-
-                                assert(eold->A21 != nullptr);
-                                assert(eold->A21->rows() == nold->rows());
-                                assert(eold->A21->cols() == sold->cols());
-
-                                (*found)->A21->block(nold->rposparent, sold->cposparent, nold->rows(), sold->cols()) = *(eold->A21);
-                                delete eold; // just makes it a nullptr, so this is safe to do in the loop 
-                            }
-                        }
-                    }
                 })
-                // .set_fulfill([&] (Cluster* c){
-                    
-                // })
                 .set_name([](Cluster* c) {
                     return "update_edges_" + to_string(c->get_order());
                 })
@@ -670,36 +727,9 @@ int ParTree::factorize(){
                     return 5;
                 });
 
-
-            fill_edges_tf.set_mapping([&] (Edge* e){
-                return (e->n1->get_order() + e->n2->get_order())%ttor_threads;  
-            })
-            .set_indegree([](Edge* e){ 
-                return 1;
-            })
-            .set_task([&] (Edge* e) {
-                auto nold = e->n2;
-                auto sold = e->n1;
-                auto nnew = nold->get_parent();
-                auto snew = e->n1->get_parent();
-                auto found = find_if(snew->edgesOut.begin(), snew->edgesOut.end(), [&nnew](Edge* enew){return enew->n2 == nnew;});
-                assert(found != snew->edgesOut.end());  // Must have the edge
-                assert(e->A21 != nullptr);
-                assert(e->A21->rows() == nold->rows());
-                (*found)->A21->block(nold->rposparent, sold->cposparent, nold->rows(), sold->cols()) = *(e->A21);
-                delete e->A21; // makes it a nullptr
-               
-            })
-            .set_name([](Edge* e) {
-                return "fill_edges_" + to_string(e->n1->get_order())+ "_" + to_string(e->n2->get_order());
-            })
-            .set_priority([&](Edge*) {
-                return 4;
-            });
-
             // Add in new edges 
             addEdgeIn_tf.set_mapping([&] (Edge* e){
-                    return (e->n2->get_order())%ttor_threads; // Mapping matters to avoid race conditions -- IMPORTANT
+                    return (e->n2->get_order())%n_threads; // Mapping matters to avoid race conditions -- IMPORTANT
                 })
                 .set_binding([] (Edge*) {
                     return true;
@@ -730,7 +760,6 @@ int ParTree::factorize(){
 
             auto log0 = systime();
             if (this->ttor_log){
-                cout << "merge log " << endl;
                 std::ofstream logfile;
                 std::string filename = "./logs/merge_" + to_string(this->ilvl) + ".log." + to_string(0);
                 if(this->verb) printf("  Level %d logger saved to %s\n", this->ilvl, filename.c_str());
@@ -753,7 +782,8 @@ int ParTree::factorize(){
              // << "sprsfy: " << elapsed(spstart,spend) << "  "
              <<  elapsed(mstart,mend) << "  " 
              <<  elapsed(lvl0,lvl1) << "  ("
-             <<  get<0>(topsize()) << ", " << get<1>(topsize()) << ")   "
+             <<  get<0>(topsize()) << ", " << get<1>(topsize()) << ")   (" 
+             <<  blas_threads << ", " << ttor_threads << ")  " 
         //      << "a.r top_sep: " << (double)get<0>(topsize())/(double)get<1>(topsize()) 
              << endl;
 
