@@ -42,7 +42,7 @@ ifeq ($(HSL_AVAIL),1)
 endif
 
 ifeq ($(USE_HWLOC),1)
-	INCLUDE += $(HWLOC_INC)
+	INCLUDE += -I$(HWLOC_INC)
 	LDFLAGS += -L$(HWLOC_LIBS)
 	CFLAGS += -DUSE_HWLOC
 endif
