@@ -24,6 +24,7 @@
 typedef Eigen::SparseMatrix<double, 0, int> SpMat;
 typedef Eigen::VectorBlock<Eigen::Matrix<double, -1,  1, 0, -1,  1>, -1> Segment;
 typedef Eigen::Block<Eigen::Matrix<double, -1, -1, 0, -1, -1>, -1, -1> MatrixBlock;
+typedef Eigen::PermutationMatrix<Eigen::Dynamic, Eigen::Dynamic> PermMat;
 
 bool are_connected(Eigen::VectorXi &a, Eigen::VectorXi &b, SpMat &A);
 bool should_be_disconnected(int lvl1, int lvl2, int sep1, int sep2);

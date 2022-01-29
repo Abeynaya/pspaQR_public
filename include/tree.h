@@ -26,9 +26,6 @@
 #include "toperations.h"
 #include "profile.h"
 
-typedef Eigen::SparseMatrix<double, 0, int> SpMat;
-typedef Eigen::PermutationMatrix<Eigen::Dynamic, Eigen::Dynamic> PermMat;
-
 
 // Tree
 class Tree{

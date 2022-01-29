@@ -28,11 +28,29 @@
 #include "tree.h"
 #include "tasktorrent.hpp"
 
-typedef Eigen::SparseMatrix<double, 0, int> SpMat;
-
 typedef std::array<Edge*,2> pEdge2;
 typedef std::array<Cluster*,2> pCluster2;
+typedef std::list<Edge*>::iterator EdgeIt;
+typedef std::array<EdgeIt,3> EdgeIt3;
 
+// Define hash function for EdgeIt and inject into namespace std
+template <typename T>
+inline void hash_combine(std::size_t& seed, const T& v){
+    std::hash<T> hasher;
+    seed ^= hasher(v) + 0x9e3779b9 + (seed<<6) + (seed>>2);
+}
+
+template<>
+struct std::hash<EdgeIt>
+{
+    std::size_t operator()(EdgeIt const& eit) const noexcept
+    {
+        std::size_t seed = 0;
+        hash_combine(seed,(*eit)->n1->get_order());
+        hash_combine(seed,(*eit)->n2->get_order());
+        return seed;
+    }
+};
 
 class ParTree: public Tree
 {
@@ -42,6 +60,12 @@ private:
 	int ttor_log; // For ttor logging and profiling
 
 	// Methods needed for elimination
+	void geqrt_cluster(Cluster*);
+	void larfb_edge(Edge*);
+	void ssrfb_edges(Edge*,Edge*,Edge*);
+	void tsqrt_edge(Edge*);
+
+
 	void alloc_fillin(Cluster*, Cluster*, ttor::Taskflow<Edge*>*);
 	int update_cluster(Cluster*, Cluster*, ttor::Taskflow<Cluster*>*, ttor::Taskflow<Edge*>*);
 	int house(Cluster*);

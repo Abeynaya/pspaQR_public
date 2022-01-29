@@ -713,15 +713,15 @@ void Tree::partition(SpMat& A){
         }
         for (auto k = begin; k != end; ){
             auto idparent = (*k)->get_parentid();
-            vector<Cluster*> children;
-            children.push_back(*k);
+            set<Cluster*> children;
+            children.insert(*k);
             int children_csize = (*k)->cols();
             int children_rsize = (*k)->rows();
             int children_cstart = (*k)->get_cstart();
             int children_rstart = (*k)->get_rstart();
             k++;
             while(k != end && idparent == (*k)->get_parentid()){
-                children.push_back(*k);
+                children.insert(*k);
                 children_csize += (*k)->cols();
                 children_rsize += (*k)->rows();
                 k++;
@@ -1205,7 +1205,7 @@ void Tree::sparsifyD_imp(Cluster* c){
    
     #ifdef USE_MKL
         /* Rank revealing QR on C with rrqr function */ 
-        int bksize = min(C.cols(), max((long)3,(long)(0.05 * C.rows())));
+        int bksize = min(C.cols(), max((long)3,(long)(0.1 * C.rows())));
         laqps(&C, &jpvt, &t, this->tol, bksize, rank);
         rii = C.topLeftCorner(rank, rank).diagonal();
 

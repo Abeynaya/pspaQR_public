@@ -154,6 +154,7 @@ private:
     Eigen::MatrixXd* Q = nullptr;
     Eigen::VectorXd* tau = nullptr;
     Eigen::MatrixXd* T = nullptr;
+    std::unordered_map<int, Eigen::MatrixXd*> Tmap; // Triangular factor for each edgeOut->n2
     /* Scaling */
     Eigen::MatrixXd* Qs = nullptr;
     Eigen::MatrixXd* Ts = nullptr; 
@@ -171,7 +172,7 @@ private:
 public: 
     int rposparent; // row position in the parent
     int cposparent; // column position in the parent
-    std::vector<Cluster*> children;
+    std::set<Cluster*> children;
     std::set<Cluster*> rsparsity; 
 
     std::set<Cluster*> cnbrs; // neigbors including self
@@ -264,9 +265,13 @@ public:
     void set_Q(Eigen::MatrixXd&);
     void set_tau(Eigen::VectorXd&);
     void set_T(Eigen::MatrixXd&);
+    void create_T(int);
+    void set_T(int, Eigen::MatrixXd&); 
     void set_tau(int, int);
     Eigen::VectorXd* get_tau();
     Eigen::MatrixXd* get_T();
+    Eigen::MatrixXd* get_T(int);
+
     Eigen::MatrixXd* get_Q();
     void set_size(int r, int c);
 

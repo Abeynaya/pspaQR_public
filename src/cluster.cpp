@@ -53,7 +53,7 @@ Cluster* Cluster::get_parent(){return parent;}
 ClusterID Cluster::get_parentid(){return parentid;}
 void Cluster::set_parentid(ClusterID cid){parentid = cid;}
 void Cluster::set_parent(Cluster* p){parent = p;}
-void Cluster::add_children(Cluster* c){children.push_back(c);}
+void Cluster::add_children(Cluster* c){children.insert(c);}
 
 Edge* Cluster::self_edge(){
     assert(eself!=nullptr);
@@ -70,14 +70,16 @@ void Cluster::add_edgeOutFillin(Edge* e){edgesOutFillin.push_back(e);}
 void Cluster::add_edgeInFillin(Edge* e){edgesInFillin.push_back(e);}
 
 void Cluster::combine_edgesOut(){
-    if (!edgesOutCombined)
+    if (!edgesOutCombined){
         edgesOut.insert(edgesOut.end(), edgesOutFillin.begin(), edgesOutFillin.end());
-    edgesOutCombined = true;
+        edgesOutCombined = true;
+    }
 }
 void Cluster::combine_edgesIn(){
-    if (!edgesInCombined)
+    if (!edgesInCombined){
         edgesIn.insert(edgesIn.end(), edgesInFillin.begin(), edgesInFillin.end());
-    edgesInCombined = true;
+        edgesInCombined = true;
+    }
 }
 
 void Cluster::add_edge_spars_out(Edge* e){edgesOutNbrSparsification.push_back(e);}
@@ -101,6 +103,13 @@ void Cluster::set_T(Eigen::MatrixXd& T_) {
     this->T = new Eigen::MatrixXd(0,0);
     *(this->T) = T_;
 }
+void Cluster::create_T(int norder) {
+    this->Tmap[norder] = new Eigen::MatrixXd(0,0);
+}
+void Cluster::set_T(int norder, Eigen::MatrixXd& T_) {
+    *(this->Tmap.at(norder)) = T_;
+}
+
 void Cluster::set_tau(Eigen::VectorXd& t_) {
     this->tau = new Eigen::VectorXd(0);
     *(this->tau) = t_;
@@ -117,6 +126,8 @@ void Cluster::set_tau(int r, int c){
 Eigen::MatrixXd* Cluster::get_Q(){return this->Q;}
 Eigen::VectorXd* Cluster::get_tau(){return this->tau;}
 Eigen::MatrixXd* Cluster::get_T(){return this->T;}
+Eigen::MatrixXd* Cluster::get_T(int norder){return this->Tmap.at(norder);}
+
 
 
 /* Scaling */
