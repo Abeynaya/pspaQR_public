@@ -758,6 +758,7 @@ int ParTree::factorize(){
                     return c->self_edge()->interior_deps;
                 })
                 .set_task([&] (Cluster* c) {
+                    if (verb) cout << "scale_geqrf_" << c->get_id() << endl;
                     // Combine edgesIn and edgesInFillin
                     // c->combine_edgesIn(); /// Iterators used previously can become invalidated 
                     if(want_sparsify(c)) geqrf_cluster(c);
@@ -790,6 +791,7 @@ int ParTree::factorize(){
                     return 2+ e->interior_deps;
                 })
                 .set_task([&] (Edge* e) {
+                    if (verb) cout << "scale_apply_" << e->n1->get_id() << " " << e->n2->get_id() << endl;
                     Cluster* c = e->n2;
                     Cluster* n = e->n1; 
                     if (want_sparsify(c)) larfb(c->get_Qs(), c->get_Ts(), e->A21);
@@ -845,6 +847,7 @@ int ParTree::factorize(){
                     return 2; // the sparsify on clusters c and n
                 })
                 .set_task([&] (Edge* e) {
+                    if (verb) cout << "sparsify_apply_" << e->n1->get_id() << " " << e->n2->get_id() << endl;
                     Cluster* c = e->n2; 
                     Cluster* n = e->n1; 
                     MatrixXd Aold = *e->A21;
@@ -1065,6 +1068,7 @@ void ParTree::QR_bwd(Cluster* c) const{
     MatrixXd R = c->self_edge()->A21->topRows(xs.size()); // correct when using geqrt
     // MatrixXd R = c->get_Q()->topRows(xs.size()); // used this in the earlier implementation
     trsv(&R, &xs, CblasUpper, CblasNoTrans, CblasNonUnit); 
+    cout << c->get_id() << endl << R << endl;
 }
 
 void ParTree::scaleD_fwd(Cluster* c) const{
