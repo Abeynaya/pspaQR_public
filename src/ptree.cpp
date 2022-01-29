@@ -266,7 +266,6 @@ void ParTree::geqrf_cluster(Cluster* c){
     MatrixXd Q = *(e->A21);
     VectorXd t = VectorXd::Zero(c->cols());
     MatrixXd T = MatrixXd::Zero(c->cols(), c->cols());
-    cout << c->get_id() << Q << endl;
     geqrf(&Q, &t);
     larft(&Q, &t, &T);
 
@@ -1032,7 +1031,7 @@ void ParTree::QR_fwd(Cluster* c) const{
     // i=0;
     // for (auto e: c->edgesOut){
     //     if (e->A21 != nullptr){
-    //         int s = e->A21->rows(); // will not be affected even if e->n2->rows() change b/c of sparsification
+    //         int s = e->A21->rows(); 
     //         e->n2->get_x()->segment(0, s) = xc.segment(curr_row, s);
     //         curr_row += s;
     //         ++i;
@@ -1040,21 +1039,30 @@ void ParTree::QR_fwd(Cluster* c) const{
     // }
 
     // geqrt on self_edge->A21
-    larfb(c->self_edge()->A21, c->get_T(c->get_order()), c->get_x());
+    MatrixXd* cc = c->self_edge()->A21;
+    int cx_size = cc->rows();
+    Segment xc = c->get_x()->segment(0,cx_size);
+    larfb(cc, c->get_T(c->get_order()), &xc);
+    
+
     // tsqrt on all other c->edgesOut
     for (auto e: c->edgesOut){
         Cluster* n = e->n2;
         if (n != c){
-            int nb=min(32,c->cols());
-            int info = LAPACKE_dtpmqrt(LAPACK_COL_MAJOR, 'L', 'T', n->rows(), 1, c->cols(), 0, nb,
-                                        e->A21->data(), n->rows(),
-                                        c->get_T(n->get_order())->data(), c->cols(),
-                                        c->get_x()->data(), c->rows(),
-                                        n->get_x()->data(), n->rows());
+            MatrixXd* nc = e->A21;
+            int m = nc->rows(); // will not be affected even if e->n2->rows() change b/c of sparsification
+            int k = cc->cols();
+            int nb = min(32, k);
+            Segment xn = n->get_x()->segment(0,m);
+            int info = LAPACKE_dtpmqrt(LAPACK_COL_MAJOR, 'L', 'T', m, 1, k, 0, nb,
+                                        nc->data(), m,
+                                        c->get_T(n->get_order())->data(), k,
+                                        xc.data(), cx_size,
+                                        xn.data(), m);
             assert(info==0);
         }
     }
-
+    
 }
 
 void ParTree::QR_bwd(Cluster* c) const{
@@ -1068,7 +1076,6 @@ void ParTree::QR_bwd(Cluster* c) const{
     MatrixXd R = c->self_edge()->A21->topRows(xs.size()); // correct when using geqrt
     // MatrixXd R = c->get_Q()->topRows(xs.size()); // used this in the earlier implementation
     trsv(&R, &xs, CblasUpper, CblasNoTrans, CblasNonUnit); 
-    cout << c->get_id() << endl << R << endl;
 }
 
 void ParTree::scaleD_fwd(Cluster* c) const{

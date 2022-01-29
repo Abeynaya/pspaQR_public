@@ -432,6 +432,28 @@ void larfb(MatrixXd* V, MatrixXd* T, VectorXd* C, char side, char trans, char di
     #endif
 }
 
+/* C is a segment */
+void larfb(MatrixXd* V, MatrixXd* T, Segment* C, char side, char trans, char direct, char storev){
+    int m = C->rows();
+    int n = C->cols();
+    int k = V->cols();
+    assert(m == V->rows());
+    assert(T != nullptr);
+    assert(T->rows() == k);
+    if (m==0 || n==0){
+        return;
+    }
+
+    #ifdef USE_MKL
+    MatrixXd work(n,k);
+    work.setZero();
+    dlarfb_(&side, &trans, &direct, &storev, &m, &n, &k, V->data(), &m, T->data(), &k, C->data(), &m, work.data(), &n);
+    #else 
+    int info = LAPACKE_dlarfb(LAPACK_COL_MAJOR, side, trans, direct, storev, m, n, k, V->data(), m, T->data(), k, C->data(), m);
+    assert(info==0);
+    #endif
+}
+
 // Matrix C
 /* Apply householder vectors on a rectangular matrix 
 V is stored columnwise
