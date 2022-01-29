@@ -266,7 +266,7 @@ void ParTree::geqrf_cluster(Cluster* c){
     MatrixXd Q = *(e->A21);
     VectorXd t = VectorXd::Zero(c->cols());
     MatrixXd T = MatrixXd::Zero(c->cols(), c->cols());
-
+    cout << c->get_id() << Q << endl;
     geqrf(&Q, &t);
     larft(&Q, &t, &T);
 
