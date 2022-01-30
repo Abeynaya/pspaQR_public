@@ -176,89 +176,6 @@ void ParTree::ssrfb_edges(Edge* cn, Edge* cm, Edge* mn){ // c->n edge contains Q
     return;
 }
 
-// Only compute Householder reflection
-int ParTree::house(Cluster* c){
-    if (c->cols()==0){
-        c->set_eliminated();
-        cout << "cluster has zero cols" << endl;
-        exit(1);
-    }
-
-    // Combine edgesIn and edgesInFillin -- just to be consistent
-    c->combine_edgesIn();
-
-    /* Do Householder reflections */
-    vector<MatrixXd*> H(c->edgesOut.size());
-    int num_rows=0;
-    int num_cols=0;
-    int count=0;
-    for (auto edge: c->edgesOut){
-        assert(edge->A21 != nullptr);
-        assert(edge->n2->is_eliminated() == false);
-        H[count]= edge->A21;
-        num_rows += edge->A21->rows();
-        num_cols = edge->A21->cols(); // Must be the same
-        count++;
-    }
-    assert(num_rows>0);
-    assert(num_cols>0);
-
-    MatrixXd Q = MatrixXd::Zero(num_rows, num_cols);
-    VectorXd tau = VectorXd::Zero(num_cols);
-    MatrixXd T = MatrixXd::Zero(num_cols, num_cols);
-
-    concatenate(H, &Q);
-    geqrf(&Q, &tau);
-    larft(&Q, &tau, &T);
-
-    c->set_Q(Q);
-    c->set_tau(tau);
-    c->set_T(T);
-    c->set_eliminated();
-    return 0;
-}
-
-// Update Q^T A after householder on interiors
-int ParTree::update_cluster(Cluster* c, Cluster* n, Taskflow<Cluster*>* scale_geqrf_tf, Taskflow<Edge*>* scale_larfb_trsm_tf){
-    n->combine_edgesOut();
-    list<Edge*> n_edges;
-    // Concatenate to get the matrix V so that V <- Q^T V
-    vector<MatrixXd*> N;
-    MatrixXd V(c->get_Q()->rows(), n->cols());
-    int curr_row = 0;
-
-    for (auto edge: c->edgesOut){
-        Cluster* nbr_c = edge->n2; 
-        auto found_out = find_if(n->edgesOut.begin(), n->edgesOut.end(), [&nbr_c](Edge* e){return (e->n2 == nbr_c );});
-        assert(found_out != n->edgesOut.end()); // Fill-in allocated already
-        Edge* ecn = *(found_out);
-        n_edges.push_back(ecn);
-        N.push_back(ecn->A21);
-        V.middleRows(curr_row, ecn->A21->rows()) = *ecn->A21; 
-        curr_row += ecn->A21->rows();  
-    }
-
-    // Compute V = Q^T V
-    larfb(c->get_Q(), c->get_T(), &V);   
-
-    // Copy V back to the edges struct
-    curr_row = 0;
-    for (int i=0; i< N.size(); ++i){
-        *(N[i]) = V.middleRows(curr_row, N[i]->rows());
-        curr_row += N[i]->rows();
-    } 
-
-    // Fullfill dependencies 
-    if (this->ilvl >= skip && this->ilvl < nlevels-2  && this->tol != 0){
-        for (auto edge:n_edges){ // order doesn't matter
-            if (edge->n2 != c){
-                if (edge->n2 == n) scale_geqrf_tf->fulfill_promise(n); // Scale GEQRF
-                else scale_larfb_trsm_tf->fulfill_promise(edge);
-            }
-        }
-    }
-    return 0;
-}
 /* Scaling */
 void ParTree::geqrf_cluster(Cluster* c){
     Edge* e = c->self_edge();
@@ -594,8 +511,7 @@ int ParTree::factorize(){
                 assert(ttor_threads * blas_threads <= n_threads);
             }
 
-            Logger log(1000); 
-            
+            Logger log(10000000); 
             if (this->ttor_log){
                 // log = Logger(10000000);
                 tp.set_logger(&log);
@@ -613,8 +529,7 @@ int ParTree::factorize(){
                 .set_fulfill([&] (Cluster* c){
                     // All larfb
                     for (EdgeIt it=c->edgesIn.begin(); it!=c->edgesIn.end(); ++it){ // All the edges that need to be updated
-                        EdgeIt it_copy = it;
-                        larfb_tf.fulfill_promise(it_copy);
+                        larfb_tf.fulfill_promise(it);
                     }
                     // First tsqrt
                     auto c_edge_it = c->edgesOut.begin();
@@ -715,7 +630,7 @@ int ParTree::factorize(){
             // should I bind this to get better memory access times?
             tsqrt_tf.set_mapping([&] (EdgeIt eit){
                     Edge* e = *eit;
-                    return (e->n1->get_order() + e->n2->get_order())%ttor_threads;  
+                    return (e->n1->get_order() + 1)%ttor_threads;  
                 })
                 .set_indegree([](EdgeIt){ // e->A21 = A_cn
                     return 1; // geqrt on e->n1
@@ -734,10 +649,9 @@ int ParTree::factorize(){
                     }
                     // All ssrfb in its row
                     for (EdgeIt it=c->edgesIn.begin(); it!=c->edgesIn.end(); ++it){ // All the edges that need to be updated
-                        auto it_copy = it;
                         Cluster* m = (*it)->n1;
                         auto found = find_out_edge(m,n);
-                        ssrfb_tf.fulfill_promise({eit, it_copy, found}); // cn, cm, mn
+                        ssrfb_tf.fulfill_promise({eit, it, found}); // cn, cm, mn
                     }
                 })
                 .set_name([](EdgeIt eit) {
@@ -745,7 +659,7 @@ int ParTree::factorize(){
                     return "tsqrt_" + to_string(e->n1->get_order())+ "_" + to_string(e->n2->get_order());
                 })
                 .set_priority([&](EdgeIt) {
-                    return 5;
+                    return 6;
                 });
 
             /* Scaling */
@@ -758,7 +672,6 @@ int ParTree::factorize(){
                 })
                 .set_task([&] (Cluster* c) {
                     if (verb) cout << "scale_geqrf_" << c->get_id() << endl;
-                    // Combine edgesIn and edgesInFillin
                     // c->combine_edgesIn(); /// Iterators used previously can become invalidated 
                     if(want_sparsify(c)) geqrf_cluster(c);
                 })
@@ -1014,30 +927,6 @@ int ParTree::factorize(){
  * Solve
  **/
 void ParTree::QR_fwd(Cluster* c) const{
-    // MatrixXd* Q = c->get_Q();
-    // VectorXd xc = VectorXd::Zero(Q->rows());
-    // int curr_row = 0;
-    // int i=0;
-    // for (auto e: c->edgesOut){
-    //     if (e->A21 != nullptr){ // can be null for rect matrices
-    //         int s = e->A21->rows();
-    //         xc.segment(curr_row, s) = e->n2->get_x()->segment(0, s);
-    //         curr_row += s;
-    //         ++i;
-    //     }
-    // }
-    // larfb(Q, c->get_T(), &xc);
-    // curr_row = 0;
-    // i=0;
-    // for (auto e: c->edgesOut){
-    //     if (e->A21 != nullptr){
-    //         int s = e->A21->rows(); 
-    //         e->n2->get_x()->segment(0, s) = xc.segment(curr_row, s);
-    //         curr_row += s;
-    //         ++i;
-    //     }
-    // }
-
     // geqrt on self_edge->A21
     MatrixXd* cc = c->self_edge()->A21;
     int cx_size = cc->rows();
