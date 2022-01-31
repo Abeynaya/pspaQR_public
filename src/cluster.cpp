@@ -67,7 +67,22 @@ void Cluster::add_edgeOut(Edge* e){edgesOut.push_back(e);}
 void Cluster::add_edgeIn(Edge* e){edgesIn.push_back(e);}
 
 void Cluster::add_edgeOutFillin(Edge* e){edgesOutFillin.push_back(e);}
-void Cluster::add_edgeInFillin(Edge* e){edgesInFillin.push_back(e);}
+
+void Cluster::add_edgeIn(Edge* e, bool is_spars_nbr){
+    std::lock_guard<std::mutex> lock(mutex_edgeIn);
+    // No need to check if edge is present -- will not be present for sure
+    edgesIn.push_back(e);
+    if (is_spars_nbr) edgesInNbrSparsification.push_back(e);
+}
+
+void Cluster::add_edgeInFillin(Edge* e, bool is_spars_nbr){
+    std::lock_guard<std::mutex> lock(mutex_edgeInFillin);
+    auto found = find_if(edgesInFillin.begin(), edgesInFillin.end(), [&e](Edge* ein){return ein == e;});
+    if (found == edgesInFillin.end()){
+        edgesInFillin.push_back(e);
+        if (is_spars_nbr) edgesInNbrSparsification.push_back(e);
+    }
+}
 
 void Cluster::combine_edgesOut(){
     if (!edgesOutCombined){
@@ -83,7 +98,13 @@ void Cluster::combine_edgesIn(){
 }
 
 void Cluster::add_edge_spars_out(Edge* e){edgesOutNbrSparsification.push_back(e);}
-void Cluster::add_edge_spars_in(Edge* e){edgesInNbrSparsification.push_back(e);}
+void Cluster::add_edge_spars_in(Edge* e){
+    std::lock_guard<std::mutex> lock(mutex_edgeInFillin);
+    auto found = find_if(edgesInNbrSparsification.begin(), edgesInNbrSparsification.end(), [&e](Edge* ein){return ein == e;});
+    if (found == edgesInNbrSparsification.end()){
+        edgesInNbrSparsification.push_back(e);
+    }
+}
 
 void Cluster::sort_edgesOut(bool reverse){
     if (reverse){

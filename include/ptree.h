@@ -66,7 +66,7 @@ private:
 	void tsqrt_edge(Edge*);
 
 
-	void alloc_fillin(Cluster*, Cluster*, ttor::Taskflow<Edge*>*);
+	void alloc_fillin(Cluster*, Cluster*);
 	int update_cluster(Cluster*, Cluster*, ttor::Taskflow<Cluster*>*, ttor::Taskflow<Edge*>*);
 	int house(Cluster*);
 
@@ -80,7 +80,7 @@ private:
 	void sparsify_rrqr_only(Cluster*);
 
 	// Merge
-	void compute_new_edges(Cluster*, ttor::Taskflow<Edge*>*);
+	void compute_new_edges(Cluster*);
 
 	// Methods for solve
 	void QR_fwd(Cluster*) const;

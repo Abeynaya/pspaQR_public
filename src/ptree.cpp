@@ -31,16 +31,18 @@ EdgeIt find_out_edge(Cluster* m, Cluster* n){
  such that A(c2, c1) block is non-zero */
 Edge* ParTree::new_edgeOut(Cluster* c1, Cluster* c2){
     Edge* e;
-
     MatrixXd* A = new MatrixXd(c2->rows(), c1->cols());
     A->setZero();
     e = new Edge(c1, c2, A);
     c1->cnbrs.insert(c2);
     c1->add_edgeOut(e);
 
+    bool is_spars_nbr = false;
     if (c1->get_level()>this->current_bottom && c2->get_level()>this->current_bottom && c1 != c2){
         c1->add_edge_spars_out(e);
+        is_spars_nbr = true;
     }
+    if(c1 != c2) c2->add_edgeIn(e,is_spars_nbr); // thread-safe using lock_guard
     return e; 
 }
 
@@ -48,20 +50,22 @@ Edge* ParTree::new_edgeOut(Cluster* c1, Cluster* c2){
  such that A(c2, c1) block is non-zero */
 Edge* ParTree::new_edgeOutFillin(Cluster* c1, Cluster* c2){
     Edge* e;
-
     MatrixXd* A = new MatrixXd(c2->rows(), c1->cols());
     A->setZero();
     e = new Edge(c1, c2, A);
     c1->cnbrs.insert(c2); // probably safe?
     c1->add_edgeOutFillin(e);
 
+    bool is_spars_nbr = false;
     if (c1->get_level()>this->current_bottom && c2->get_level()>this->current_bottom && c1 != c2){
         c1->add_edge_spars_out(e);
+        is_spars_nbr = true;
     }
+    if (c1 != c2) c2->add_edgeInFillin(e,is_spars_nbr); // thread-safe using lock_guard
     return e; 
 }
 
-void ParTree::alloc_fillin(Cluster* c, Cluster* n, Taskflow<Edge*>* add_edge_tf){
+void ParTree::alloc_fillin(Cluster* c, Cluster* n){
     for (auto edge: c->edgesOut){
         Cluster* nbr_c = edge->n2; 
         auto found_out = find_if(n->edgesOut.begin(), n->edgesOut.end(), [&nbr_c](Edge* e){return (e->n2 == nbr_c );});
@@ -71,7 +75,6 @@ void ParTree::alloc_fillin(Cluster* c, Cluster* n, Taskflow<Edge*>* add_edge_tf)
             if (found_fillin == n->edgesOutFillin.end()){ // Cannot find the edge
                 Edge* ecn = new_edgeOutFillin(n, nbr_c);
                 ecn->interior_deps++;
-                add_edge_tf->fulfill_promise(ecn); // add edgeInFillin
             }
             else {
                 (*found_fillin)->interior_deps++;
@@ -196,8 +199,7 @@ void ParTree::geqrf_cluster(Cluster* c){
 }
 
 /* Merge */
-void ParTree::compute_new_edges(Cluster* snew, Taskflow<Edge*>* add_edge_tf){
-    
+void ParTree::compute_new_edges(Cluster* snew){
     set<Cluster*> edges_merged;
     for (auto sold: snew->children){
         sold->combine_edgesOut(); // IMPORTANT -- safe since each snew has unique children
@@ -213,12 +215,7 @@ void ParTree::compute_new_edges(Cluster* snew, Taskflow<Edge*>* add_edge_tf){
     // Allocate memory and create new edges
     for (auto n: snew->cnbrs){
         Edge* e = new_edgeOut(snew, n);
-        if (snew==n){
-            snew->add_self_edge(e);
-        }
-        else{ // snew != n
-            add_edge_tf->fulfill_promise(e);
-        }
+        if (snew==n) snew->add_self_edge(e);
     }
 
     // Sort edges
@@ -361,7 +358,6 @@ int ParTree::factorize(){
             Threadpool_shared tp(ttor_threads, verb, "fillin_"+ to_string(ilvl)+"_");
             Taskflow<Cluster*> get_sparsity_tf(&tp, verb);
             Taskflow<pCluster2> fillin_tf(&tp, verb);
-            Taskflow<Edge*> addEdgeIn_tf(&tp, verb);
 
             Logger log(1000); 
             if (this->ttor_log){
@@ -399,41 +395,12 @@ int ParTree::factorize(){
                     return 1;  // get_sparsity on c
                 })
                 .set_task([&] (pCluster2 cn) {
-                    alloc_fillin(cn[0], cn[1], &addEdgeIn_tf);
+                    alloc_fillin(cn[0], cn[1]);
                 })
                 .set_name([](pCluster2 cn) {
                     return "fillin_" + to_string(cn[0]->get_order()) + "_" + to_string(cn[1]->get_order());
                 })
                 .set_priority([&](pCluster2) {
-                    return 7;
-                });
-
-            // Fill-in edges 
-            addEdgeIn_tf.set_mapping([&] (Edge* e){
-                    return e->n2->get_order()%ttor_threads; // Mapping matters to avoid race conditions -- IMPORTANT
-                })
-                .set_binding([] (Edge*) {
-                    return true;
-                })
-                .set_indegree([](Edge*){
-                    return 1;
-                })
-                .set_task([&] (Edge* e) { // Will work because of binding set to true
-                    Cluster* c1 = e->n1;
-                    Cluster* c2 = e->n2;
-                    // Sufficient to check only in edgeInFillin struct
-                    auto found = find_if(c2->edgesInFillin.begin(), c2->edgesInFillin.end(), [&c1](Edge* in_edge){return in_edge->n1 == c1;});
-                    if (found == c2->edgesInFillin.end()){
-                        c2->add_edgeInFillin(e);
-                        if (c1->get_level()>this->ilvl && c2->get_level()>this->ilvl && c1 != c2){
-                            c2->add_edge_spars_in(e);
-                        }
-                    }
-                })
-                .set_name([](Edge* e) {
-                    return "addEdgeIn_" + to_string(e->n1->get_order())+"_"+to_string(e->n2->get_order());
-                })
-                .set_priority([&](Edge* ) {
                     return 7;
                 });
 
@@ -445,7 +412,6 @@ int ParTree::factorize(){
                 }
             }
             tp.join();
-
             vend = systime();
 
             auto log0 = systime();
@@ -469,11 +435,13 @@ int ParTree::factorize(){
             assert(tasks > 0);
 
             blas_threads = 1;
+            /*
             if(tasks > this->n_threads) {
                 blas_threads = 1;
             } else {
                 blas_threads = this->n_threads / tasks;
             }
+            */
             assert(blas_threads > 0);
             assert(blas_threads <= n_threads);
             ttor_threads = n_threads / blas_threads;
@@ -502,6 +470,7 @@ int ParTree::factorize(){
                 #ifdef USE_MKL
                 std::string kind = "MKL";
                 mkl_set_num_threads(blas_threads);
+                if (blas_threads==1) mkl_set_dynamic(0);
                 #else
                 std::string kind = "OpenBLAS";
                 openblas_set_num_threads(blas_threads);
@@ -828,8 +797,6 @@ int ParTree::factorize(){
             // Update edges
             Threadpool_shared tp(n_threads, verb, "merge_"+ to_string(ilvl)+"_");
             Taskflow<Cluster*> update_edges_tf(&tp, verb);
-            Taskflow<Edge*> addEdgeIn_tf(&tp, verb);
-            Taskflow<Edge*> fill_edges_tf(&tp, verb);
             
             Logger log(1000); 
             if (this->ttor_log){
@@ -844,39 +811,13 @@ int ParTree::factorize(){
                     return 1;
                 })
                 .set_task([&] (Cluster* c) {
-                    compute_new_edges(c, &addEdgeIn_tf);
+                    compute_new_edges(c);
                 })
                 .set_name([](Cluster* c) {
                     return "update_edges_" + to_string(c->get_order());
                 })
                 .set_priority([&](Cluster*) {
                     return 5;
-                });
-
-            // Add in new edges 
-            addEdgeIn_tf.set_mapping([&] (Edge* e){
-                    return (e->n2->get_order())%n_threads; // Mapping matters to avoid race conditions -- IMPORTANT
-                })
-                .set_binding([] (Edge*) {
-                    return true;
-                })
-                .set_indegree([](Edge*){
-                    return 1;
-                })
-                .set_task([&] (Edge* e) { // Will work because of binding set to true
-                    Cluster* c1 = e->n1;
-                    Cluster* c2 = e->n2;
-                    // No need to check if edge is present -- it will not be present for sure
-                    c2->add_edgeIn(e);
-                    if (c1->get_level()>this->current_bottom && c2->get_level()>this->current_bottom && c1 != c2){
-                        c2->add_edge_spars_in(e);
-                    }
-                })
-                .set_name([](Edge* e) {
-                    return "addEdgeIn_" + to_string(e->n1->get_order())+"_"+to_string(e->n2->get_order());
-                })
-                .set_priority([&](Edge* ) {
-                    return 6;
                 });
 
             for (auto snew: this->bottom_current()){

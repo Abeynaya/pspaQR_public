@@ -10,7 +10,7 @@
 #include <tuple>
 #include <unordered_map>
 #include <assert.h>
-
+#include <mutex>
 #include "util.h"
 
 typedef Eigen::SparseMatrix<double, 0, int> SpMat;
@@ -168,6 +168,10 @@ private:
     /* Solution to linear system*/
     Eigen::VectorXd* x = nullptr; // Ax = b
 
+    /* Mutex for edgeIn and edgeInFillin */
+    std::mutex mutex_edgeIn;
+    std::mutex mutex_edgeInFillin;
+
 
 public: 
     int rposparent; // row position in the parent
@@ -255,7 +259,9 @@ public:
     void add_edgeOut(Edge* e);
     void add_edgeIn(Edge* e);
     void add_edgeOutFillin(Edge* e);
-    void add_edgeInFillin(Edge* e);
+
+    void add_edgeIn(Edge* e, bool is_spars_nbr);
+    void add_edgeInFillin(Edge* e, bool is_spars_nbr = false);
     // Combine edgesOut and edgesOutFillin
     void combine_edgesOut();
     void combine_edgesIn();
