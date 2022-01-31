@@ -88,6 +88,47 @@ void ParTree::alloc_fillin(Cluster* c, Cluster* n){
 }
 
 /* Elimination */
+void ParTree::get_sparsity(Cluster* c){
+    set<Cluster*> row_sparsity;
+    set<SepID> col_sparsity;
+
+    for (auto edge: c->edgesOut){
+        assert(edge->A21 != nullptr);
+        col_sparsity.insert(edge->n2->get_sepID());
+    }
+    bool geo = (this->Xcoo != nullptr);
+    double eps = 1e-14;
+
+    for (auto edge: c->edgesOut){
+        assert(edge->A21 != nullptr); 
+        Cluster* n = edge->n2;
+        if (n!= c) {
+            row_sparsity.insert(n);
+            n->add_interior_connx(c);
+        }
+        for (auto ein: n->edgesIn){
+            if (ein->n1 != c && !ein->n1->is_eliminated()){
+                assert(ein->A21 != nullptr);
+
+                Cluster* nin = ein->n1;
+                bool valid = true;
+                
+                valid = check_if_valid(c->get_id(), nin->get_id(), col_sparsity);
+                if (!geo && valid && 
+                    !(nin->get_id().l == c->get_sepID() || nin->get_id().r == c->get_sepID()) ) {
+                    valid = ((*(edge->A21)).transpose()*(*(ein->A21))).norm() > eps;                                    
+                }
+                
+                if (valid) {
+                    row_sparsity.insert(nin);
+                    nin->add_interior_connx(c);
+                }
+            }
+        }        
+    }
+    c->rsparsity = row_sparsity; 
+}
+
 void ParTree::geqrt_cluster(Cluster* c){
     if (c->cols()==0){
         c->set_eliminated();
@@ -336,6 +377,7 @@ int ParTree::factorize(){
         int ttor_threads;
 
         // Find fill-in and allocate memory
+        vstart = systime();
         {
             blas_threads=1;
             ttor_threads=n_threads;
@@ -357,7 +399,7 @@ int ParTree::factorize(){
             // Threadpool
             Threadpool_shared tp(ttor_threads, verb, "fillin_"+ to_string(ilvl)+"_");
             Taskflow<Cluster*> get_sparsity_tf(&tp, verb);
-            Taskflow<pCluster2> fillin_tf(&tp, verb);
+            // Taskflow<pCluster2> fillin_tf(&tp, verb);
 
             Logger log(1000); 
             if (this->ttor_log){
@@ -373,46 +415,42 @@ int ParTree::factorize(){
                 .set_task([&] (Cluster* c) {
                     this->get_sparsity(c);
                 })
-                .set_fulfill([&] (Cluster* c){
-                    for (auto n: c->rsparsity){
-                        fillin_tf.fulfill_promise({c,n});
-                    }
-                })
+                // .set_fulfill([&] (Cluster* c){
+                //     for (auto n: c->rsparsity){
+                //         fillin_tf.fulfill_promise({c,n});
+                //     }
+                // })
                 .set_name([](Cluster* c) {
                     return "get_sparsity_" + to_string(c->get_order());
                 })
                 .set_priority([&](Cluster*) {
-                    return 6;
+                    return 1;
                 });
 
-            fillin_tf.set_mapping([&] (pCluster2 cn){
-                    return cn[1]->get_order()%ttor_threads; // Important to avoid race conditions 
-                })
-                .set_binding([] (pCluster2) {
-                    return true;
-                })
-                .set_indegree([](pCluster2 cn){
-                    return 1;  // get_sparsity on c
-                })
-                .set_task([&] (pCluster2 cn) {
-                    alloc_fillin(cn[0], cn[1]);
-                })
-                .set_name([](pCluster2 cn) {
-                    return "fillin_" + to_string(cn[0]->get_order()) + "_" + to_string(cn[1]->get_order());
-                })
-                .set_priority([&](pCluster2) {
-                    return 7;
-                });
+            // fillin_tf.set_mapping([&] (pCluster2 cn){
+            //         return cn[1]->get_order()%ttor_threads; // Important to avoid race conditions 
+            //     })
+            //     .set_binding([] (pCluster2) {
+            //         return true;
+            //     })
+            //     .set_indegree([](pCluster2 cn){
+            //         return 1;  // get_sparsity on c
+            //     })
+            //     .set_task([&] (pCluster2 cn) {
+            //         alloc_fillin(cn[0], cn[1]);
+            //     })
+            //     .set_name([](pCluster2 cn) {
+            //         return "fillin_" + to_string(cn[0]->get_order()) + "_" + to_string(cn[1]->get_order());
+            //     })
+            //     .set_priority([&](pCluster2) {
+            //         return 2;
+            //     });
 
             // Get rsparsity for the clusters to be eliminated next
-            vstart = systime();
-            {
-                for (auto self: this->interiors_current()){
-                    get_sparsity_tf.fulfill_promise(self);
-                }
+            for (auto self: this->interiors_current()){
+                get_sparsity_tf.fulfill_promise(self);
             }
             tp.join();
-            vend = systime();
 
             auto log0 = systime();
             if (this->ttor_log){
@@ -425,7 +463,55 @@ int ParTree::factorize(){
             }
             auto log1 = systime();
 
+            {
+                // Threadpool
+                Threadpool_shared tp(ttor_threads, verb, "fillin_"+ to_string(ilvl)+"_");
+                Taskflow<Cluster*> fillin_tf(&tp, verb);
+
+                Logger log(1000); 
+                if (this->ttor_log){
+                    tp.set_logger(&log);
+                }
+
+                fillin_tf.set_mapping([&] (Cluster* n){
+                        return n->get_order()%ttor_threads; // Important to avoid race conditions 
+                    })
+                    .set_indegree([](Cluster* n){
+                        return 1;  // get_sparsity on c
+                    })
+                    .set_task([&] (Cluster* n) {
+                        for (auto c: n->interior_connxs){
+                            alloc_fillin(c,n);
+                        }
+                    })
+                    .set_name([](Cluster* n) {
+                        return "fillin_" + to_string(n->get_order());
+                    })
+                    .set_priority([&](Cluster* ) {
+                        return 1;
+                    });
+
+                // Get rsparsity for the clusters to be eliminated next
+                for (auto self: this->interfaces_current()){
+                    fillin_tf.fulfill_promise(self);
+                }
+                tp.join();
+
+                auto log0 = systime();
+                if (this->ttor_log){
+                    std::ofstream logfile;
+                    std::string filename = "./logs/alloc_" + to_string(this->ilvl) + ".log." + to_string(0);
+                    if(this->verb) printf("  Level %d logger saved to %s\n", this->ilvl, filename.c_str());
+                    logfile.open(filename);
+                    logfile << log;
+                    logfile.close();
+                }
+                auto log1 = systime();
+            }
+
         }
+        vend = systime();
+
         // Eliminate, Scale and Sparsify
         {
             // Count the number of sparsification tasks

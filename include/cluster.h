@@ -188,6 +188,7 @@ public:
 
     std::list<Edge*> edgesOutNbrSparsification;
     std::list<Edge*> edgesInNbrSparsification;
+    std::set<Cluster*> interior_connxs;
     // std::unordered_map<int, std::list<Edge*>> interiors2edges; // use unordered_map instead of map -- makes a significant difference
 
     /* Solution to A' xt=b */
@@ -262,6 +263,7 @@ public:
 
     void add_edgeIn(Edge* e, bool is_spars_nbr);
     void add_edgeInFillin(Edge* e, bool is_spars_nbr = false);
+    void add_interior_connx(Cluster*);
     // Combine edgesOut and edgesOutFillin
     void combine_edgesOut();
     void combine_edgesIn();

@@ -106,6 +106,11 @@ void Cluster::add_edge_spars_in(Edge* e){
     }
 }
 
+void Cluster::add_interior_connx(Cluster* c){
+    std::lock_guard<std::mutex> lock(mutex_edgeIn);
+    interior_connxs.insert(c);
+}
+
 void Cluster::sort_edgesOut(bool reverse){
     if (reverse){
         edgesOut.sort([](Edge* a, Edge* b){return a->n2->get_order() > b->n2->get_order();});

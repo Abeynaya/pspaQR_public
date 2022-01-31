@@ -60,6 +60,7 @@ private:
 	int ttor_log; // For ttor logging and profiling
 
 	// Methods needed for elimination
+	void get_sparsity(Cluster*);
 	void geqrt_cluster(Cluster*);
 	void larfb_edge(Edge*);
 	void ssrfb_edges(Edge*,Edge*,Edge*);
