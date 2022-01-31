@@ -188,7 +188,6 @@ public:
 
     std::list<Edge*> edgesOutNbrSparsification;
     std::list<Edge*> edgesInNbrSparsification;
-    // std::unordered_map<int, std::list<Edge*>> interiors2edges; // use unordered_map instead of map -- makes a significant difference
 
     /* Solution to A' xt=b */
     Eigen::VectorXd* xt = nullptr; // A'xt = b
@@ -268,18 +267,19 @@ public:
     void sort_edgesOut(bool reverse = false);
 
     /*Elimination*/
-    void set_Q(Eigen::MatrixXd&);
-    void set_tau(Eigen::VectorXd&);
-    void set_T(Eigen::MatrixXd&);
     void create_T(int);
     void set_T(int, Eigen::MatrixXd&); 
-    void set_tau(int, int);
+    void set_tau(int, int); // Needed for sequential implementation
+    Eigen::MatrixXd* get_T(int);
+    void set_size(int r, int c);
+    // void set_Q(Eigen::MatrixXd&);
+    // void set_tau(Eigen::VectorXd&);
+    void set_T(Eigen::MatrixXd&);
+    
+
     Eigen::VectorXd* get_tau();
     Eigen::MatrixXd* get_T();
-    Eigen::MatrixXd* get_T(int);
-
-    Eigen::MatrixXd* get_Q();
-    void set_size(int r, int c);
+    // Eigen::MatrixXd* get_Q();
 
     /* Scaling */
     void set_Qs(Eigen::MatrixXd&);

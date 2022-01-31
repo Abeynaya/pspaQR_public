@@ -123,11 +123,11 @@ void ParTree::tsqrt_edge(Edge* e){
     int nrows = e->A21->rows();
     int ncols = e->A21->cols();
     int nb=min(32,c->cols());
-    MatrixXd T = MatrixXd::Zero(ncols, ncols);
+    MatrixXd T = MatrixXd::Zero(nb, ncols);
     int info = LAPACKE_dtpqrt(LAPACK_COL_MAJOR,nrows, ncols, 0, nb,  // using big nb value causes error -- MKl bug?
                               c->self_edge()->A21->data(), c->rows(), 
                               e->A21->data(), nrows,
-                              T.data(), ncols);
+                              T.data(), nb);
     assert(info == 0);
     c->set_T(n->get_order(), T);
     return;
@@ -171,7 +171,7 @@ void ParTree::ssrfb_edges(Edge* cn, Edge* cm, Edge* mn){ // c->n edge contains Q
     int info=-1;
     dtpmqrt_(&side, &trans, &nrows, &ncols, &k, &l, &nb, 
                                 cn->A21->data(), &nrows, 
-                                c->get_T(n->get_order())->data(), &k,
+                                c->get_T(n->get_order())->data(), &nb,
                                 cm->A21->data(), &lda,
                                 mn->A21->data(), &nrows,
                                 work.data(), &info);
@@ -180,14 +180,20 @@ void ParTree::ssrfb_edges(Edge* cn, Edge* cm, Edge* mn){ // c->n edge contains Q
 }
 
 /* Scaling */
-void ParTree::geqrf_cluster(Cluster* c){
+void ParTree::scale_cluster(Cluster* c){
     Edge* e = c->self_edge();
     assert(e != nullptr);
     MatrixXd Q = *(e->A21);
-    VectorXd t = VectorXd::Zero(c->cols());
     MatrixXd T = MatrixXd::Zero(c->cols(), c->cols());
-    geqrf(&Q, &t);
-    larft(&Q, &t, &T);
+
+    // VectorXd t = VectorXd::Zero(c->cols());
+    // geqrf(&Q, &t);
+    // larft(&Q, &t, &T);
+
+    int ncols = Q.cols();
+    int nrows = Q.rows();
+    int info = LAPACKE_dgeqrt(LAPACK_COL_MAJOR, nrows, ncols, ncols, Q.data(), nrows, T.data(), ncols);
+    assert(info == 0);
 
     // Setting this is important
     (*e->A21).topRows(c->cols()) = MatrixXd::Identity(c->cols(), c->cols());
@@ -195,7 +201,7 @@ void ParTree::geqrf_cluster(Cluster* c){
 
     c->set_Qs(Q);
     c->set_Ts(T);
-    c->set_taus(t);
+    // c->set_taus(t);
 }
 
 /* Merge */
@@ -455,11 +461,8 @@ int ParTree::factorize(){
             Taskflow<EdgeIt> larfb_tf(&tp, verb);
             Taskflow<EdgeIt3> ssrfb_tf(&tp, verb);
             Taskflow<EdgeIt> tsqrt_tf(&tp, verb);
-
-            // Taskflow<Cluster*> elmn_house_tf(&tp, verb);
-            // Taskflow<pCluster2> elmn_applyQ_tf(&tp, verb);
             /* Scale */
-            Taskflow<Cluster*> scale_geqrf_tf(&tp, verb);
+            Taskflow<Cluster*> scale_geqrt_tf(&tp, verb);
             Taskflow<Edge*> scale_larfb_trsm_tf(&tp, verb);
             /* Sparsify */
             Taskflow<Cluster*> sparsify_rrqr_tf(&tp, verb);
@@ -570,7 +573,7 @@ int ParTree::factorize(){
                     // First fulfill scale 
                     Edge* edge_mn = *it[2];
                     if (this->ilvl >= skip && this->ilvl < nlevels-2  && this->tol != 0){
-                        if (edge_mn->n2 == edge_mn->n1) scale_geqrf_tf.fulfill_promise(edge_mn->n1); // Scale GEQRF
+                        if (edge_mn->n2 == edge_mn->n1) scale_geqrt_tf.fulfill_promise(edge_mn->n1); // Scale GEQRF
                         else scale_larfb_trsm_tf.fulfill_promise(edge_mn);
                     }
 
@@ -632,7 +635,7 @@ int ParTree::factorize(){
                 });
 
             /* Scaling */
-            scale_geqrf_tf.set_mapping([&] (Cluster* c){
+            scale_geqrt_tf.set_mapping([&] (Cluster* c){
                     return c->get_order()%ttor_threads; 
                 })
                 .set_indegree([&](Cluster* c){
@@ -640,9 +643,8 @@ int ParTree::factorize(){
                     return c->self_edge()->interior_deps;
                 })
                 .set_task([&] (Cluster* c) {
-                    if (verb) cout << "scale_geqrf_" << c->get_id() << endl;
-                    // c->combine_edgesIn(); /// Iterators used previously can become invalidated 
-                    if(want_sparsify(c)) geqrf_cluster(c);
+                    if (verb) cout << "scale_" << c->get_id() << endl;
+                    if(want_sparsify(c)) scale_cluster(c);
                 })
                 .set_fulfill([&] (Cluster* c){
                     // Fulfill these even for clusters that are not sparsified -- important
@@ -755,7 +757,7 @@ int ParTree::factorize(){
                 for (auto self: this->interfaces_current()){ 
                     if (this->ilvl < nlevels-2  && this->ilvl >= skip && this->tol != 0){
                         if (self->self_edge()->interior_deps == 0){
-                            scale_geqrf_tf.fulfill_promise(self);
+                            scale_geqrt_tf.fulfill_promise(self);
                         }
                     }
                 }
@@ -886,7 +888,7 @@ void ParTree::QR_fwd(Cluster* c) const{
             Segment xn = n->get_x()->segment(0,m);
             int info = LAPACKE_dtpmqrt(LAPACK_COL_MAJOR, 'L', 'T', m, 1, k, 0, nb,
                                         nc->data(), m,
-                                        c->get_T(n->get_order())->data(), k,
+                                        c->get_T(n->get_order())->data(), nb,
                                         xc.data(), cx_size,
                                         xn.data(), m);
             assert(info==0);
@@ -910,7 +912,7 @@ void ParTree::QR_bwd(Cluster* c) const{
 
 void ParTree::scaleD_fwd(Cluster* c) const{
     Segment xs = c->get_x()->segment(0,c->original_rows());
-    ormqr_trans(c->get_Qs(), c->get_taus(), &xs);
+    larfb(c->get_Qs(), c->get_Ts(), &xs);
 }
 
 void ParTree::scaleD_bwd(Cluster* c) const{

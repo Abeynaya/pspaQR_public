@@ -60,18 +60,14 @@ private:
 	int ttor_log; // For ttor logging and profiling
 
 	// Methods needed for elimination
+	void alloc_fillin(Cluster*, Cluster*);
 	void geqrt_cluster(Cluster*);
 	void larfb_edge(Edge*);
 	void ssrfb_edges(Edge*,Edge*,Edge*);
 	void tsqrt_edge(Edge*);
 
-
-	void alloc_fillin(Cluster*, Cluster*);
-	int update_cluster(Cluster*, Cluster*, ttor::Taskflow<Cluster*>*, ttor::Taskflow<Edge*>*);
-	int house(Cluster*);
-
 	// Methods for Scaling
-	void geqrf_cluster(Cluster*);
+	void scale_cluster(Cluster*);
 	// void larfb_edge(Edge* e);
 	void trsm_edge(Edge*);
 
