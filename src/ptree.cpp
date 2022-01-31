@@ -351,6 +351,7 @@ int ParTree::factorize(){
                 #ifdef USE_MKL
                 std::string kind = "MKL";
                 mkl_set_num_threads(blas_threads);
+                if (blas_threads==1) mkl_set_dynamic(0);
                 #else
                 std::string kind = "OpenBLAS";
                 openblas_set_num_threads(blas_threads);
