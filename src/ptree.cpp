@@ -883,19 +883,27 @@ void ParTree::QR_fwd(Cluster* c) const{
         Cluster* n = e->n2;
         if (n != c){
             MatrixXd* nc = e->A21;
-            int m = nc->rows(); // will not be affected even if e->n2->rows() change b/c of sparsification
+            int nrows = nc->rows(); // will not be affected even if e->n2->rows() change b/c of sparsification
+            int ncols = 1;
             int k = cc->cols();
             int nb = min(32, k);
-            Segment xn = n->get_x()->segment(0,m);
-            int info = LAPACKE_dtpmqrt(LAPACK_COL_MAJOR, 'L', 'T', m, 1, k, 0, nb,
-                                        nc->data(), m,
-                                        c->get_T(n->get_order())->data(), nb,
-                                        xc.data(), cx_size,
-                                        xn.data(), m);
-            assert(info==0);
+            Segment xn = n->get_x()->segment(0,nrows);
+
+            // use directly from mkl_lapack.h -- routine from mkl_lapacke.h doesn't work correctly
+            char side = 'L';
+            char trans = 'T';
+            int l=0;
+            VectorXd work = VectorXd::Zero(ncols*nb);
+            int info=-1;
+            dtpmqrt_(&side, &trans, &nrows, &ncols, &k, &l, &nb, 
+                                        nc->data(), &nrows, 
+                                        c->get_T(n->get_order())->data(), &k,
+                                        xc.data(), &cx_size,
+                                        xn.data(), &nrows,
+                                        work.data(), &info);
+            assert(info == 0);
         }
     }
-    
 }
 
 void ParTree::QR_bwd(Cluster* c) const{
