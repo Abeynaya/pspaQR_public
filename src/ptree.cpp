@@ -27,6 +27,19 @@ EdgeIt find_out_edge(Cluster* m, Cluster* n){
     return found;
 }
 
+bool ParTree::want_sparsify(Cluster* c) const{
+    if (c->merge_lvl() < skip || c->merge_lvl() >= nlevels-2 || this->tol==0){
+        return false;
+    }
+    if (c->lvl() > c->merge_lvl()){
+        SepID left = c->get_id().l;
+        SepID right = c->get_id().r;
+        if (left.lvl <= c->merge_lvl() && right.lvl <= c->merge_lvl()) 
+            return true;
+    }
+    return false;
+}
+
 /* Add an edge between c1 and c2
  such that A(c2, c1) block is non-zero */
 Edge* ParTree::new_edgeOut(Cluster* c1, Cluster* c2){
@@ -38,7 +51,7 @@ Edge* ParTree::new_edgeOut(Cluster* c1, Cluster* c2){
     c1->add_edgeOut(e);
 
     bool is_spars_nbr = false;
-    if (c1->get_level()>this->current_bottom && c2->get_level()>this->current_bottom && c1 != c2){
+    if (c1->lvl()>this->current_bottom && c2->lvl()>this->current_bottom && c1 != c2){
         c1->add_edge_spars_out(e);
         is_spars_nbr = true;
     }
@@ -57,7 +70,7 @@ Edge* ParTree::new_edgeOutFillin(Cluster* c1, Cluster* c2){
     c1->add_edgeOutFillin(e);
 
     bool is_spars_nbr = false;
-    if (c1->get_level()>this->current_bottom && c2->get_level()>this->current_bottom && c1 != c2){
+    if (c1->lvl()>this->current_bottom && c2->lvl()>this->current_bottom && c1 != c2){
         c1->add_edge_spars_out(e);
         is_spars_nbr = true;
     }
@@ -155,7 +168,6 @@ void ParTree::ssrfb_edges(Edge* cn, Edge* cm, Edge* mn){ // c->n edge contains Q
     int nrows = mn->A21->rows();
     int ncols = mn->A21->cols();
 
-    assert(c->get_T(n->get_order())->rows() == c->cols());
     assert(cn->A21->rows() ==  nrows);
     assert(cm->A21->rows() == c->rows());
     assert(mn->A21->rows() == nrows);
@@ -402,6 +414,7 @@ int ParTree::factorize(){
                     return 1;  // get_sparsity on c
                 })
                 .set_task([&] (pCluster2 cn) {
+                    cn[1]->interior_deps++;
                     alloc_fillin(cn[0], cn[1]);
                 })
                 .set_name([](pCluster2 cn) {
@@ -948,6 +961,7 @@ void ParTree::merge_fwd(Cluster* parent) const{
             ++k;
         }
     }
+    cout << parent->get_id() << endl <<  *parent->get_x() << endl;
 }
 
 void ParTree::merge_bwd(Cluster* parent) const{ 
@@ -960,42 +974,204 @@ void ParTree::merge_bwd(Cluster* parent) const{
     }
 }
 
+
 // /* For linear systems */
-// // Sequential for now
 void ParTree::solve(VectorXd b, VectorXd& x) const{
     // Permute the rhs according to this->rperm
     b = this->rperm.asPermutation().transpose()*b;
 
-    // Set solution
+    // Set solution -- keep it sequential 
     for (auto cluster: bottom_original()){
         cluster->set_vector(b);
     }
 
     // Fwd
-    for (int l=0; l<nlevels; ++l){
-        // Elmn
-        for (auto self: this->interiors[l]){
-            QR_fwd(self);
+    {
+        const int ttor_threads = n_threads;
+        #ifdef USE_MKL
+            mkl_set_num_threads(1);
+            mkl_set_dynamic(0); // no dynamic multi-threading
+        #else
+            openblas_set_num_threads(1);
+        #endif
+
+        // Threadpool
+        Threadpool_shared tp(ttor_threads, verb, "solve_" + to_string(ilvl)+"_");
+        /* Elimination */
+        Taskflow<Cluster*> fwd_geqrt(&tp, verb);
+        Taskflow<EdgeIt> fwd_tsqrt(&tp, verb);
+
+        /* Scale and Sparsify */
+        Taskflow<Cluster*> fwd_spars(&tp, verb);
+        /* Merge */
+        Taskflow<Cluster*> fwd_merge(&tp, verb);
+
+        fwd_geqrt.set_mapping([&] (Cluster* c){
+                return (c->get_order()+1)%ttor_threads; 
+            })
+            .set_indegree([](Cluster*){
+                return 1;
+            })
+            .set_task([&] (Cluster* c) {
+                MatrixXd* cc = c->self_edge()->A21;
+                int cx_size = cc->rows();
+                Segment xc = c->get_x()->segment(0,cx_size);
+                larfb(cc, c->get_T(c->get_order()), &xc);
+            })
+            .set_fulfill([&] (Cluster* c){
+                // First tsqrt
+                auto c_edge_it = c->edgesOut.begin();
+                assert((*c_edge_it)->n2 == c); // first edgeout is c itself when c is at leaf level
+                c_edge_it++;
+                if (c_edge_it != c->edgesOut.end()){
+                    fwd_tsqrt.fulfill_promise(c_edge_it);
+                }
+            })
+            .set_name([](Cluster* c) {
+                return "fwd_geqrt_" + to_string(c->get_order());
+            })
+            .set_priority([&](Cluster*) {
+                return 6;
+            });
+
+        fwd_tsqrt.set_mapping([&] (EdgeIt eit){
+                Edge* e = *eit;
+                return (e->n2->get_order() + 1)%ttor_threads;  // Important to avoid race conditions
+            })
+            .set_indegree([](EdgeIt){ // e->A21 = A_cn
+                return 1; // geqrt on e->n1
+            })
+            .set_binding([] (EdgeIt){
+                return true; 
+            })
+            .set_task([&] (EdgeIt eit) {
+                Cluster* c = (*eit)->n1;
+                Cluster* n = (*eit)->n2;
+                MatrixXd* A_nc = (*eit)->A21;
+                int nrows = A_nc->rows(); // will not be affected even if e->n2->rows() change b/c of sparsification
+                int ncols = 1;
+                int k = c->cols();
+                int cx_size = c->rows();
+                int nb = min(32, k);
+                Segment xc = c->get_x()->segment(0,cx_size);
+                Segment xn = n->get_x()->segment(0,nrows);
+
+                // use directly from mkl_lapack.h -- routine from mkl_lapacke.h doesn't work correctly
+                char side = 'L';
+                char trans = 'T';
+                int l=0;
+                VectorXd work = VectorXd::Zero(ncols*nb);
+                int info=-1;
+                dtpmqrt_(&side, &trans, &nrows, &ncols, &k, &l, &nb, 
+                                            A_nc->data(), &nrows, 
+                                            c->get_T(n->get_order())->data(), &k,
+                                            xc.data(), &cx_size,
+                                            xn.data(), &nrows,
+                                            work.data(), &info);
+                assert(info == 0);
+            })
+            .set_fulfill([&] (EdgeIt eit){
+                auto eit_next = eit;
+                eit_next++;
+                Cluster* c = (*eit)->n1;
+                Cluster* n = (*eit)->n2;
+                // Next tsqrt
+                if (eit_next != c->edgesOut.end()){
+                    fwd_tsqrt.fulfill_promise(eit_next);
+                }
+                // Sparsification or merge
+                fwd_spars.fulfill_promise(n); // always
+            })
+            .set_name([](EdgeIt eit) {
+                Edge* e = *eit;
+                return "fwd_tsqrt_" + to_string(e->n1->get_order())+ "_" + to_string(e->n2->get_order());
+            })
+            .set_priority([&](EdgeIt) {
+                return 6;
+            });
+
+        fwd_spars.set_mapping([&] (Cluster* c){
+                return c->get_order()%ttor_threads; 
+            })
+            .set_indegree([&](Cluster* c){
+                if (c->interior_deps == 0) return (unsigned long)1;
+                return c->interior_deps;
+            })
+            .set_task([&] (Cluster* c) {
+                if (want_sparsify(c)){
+                    cout << "here" << endl;
+                    scaleD_fwd(c); // FWD scaling
+                    orthogonalD_fwd(c); // FWD sparsification
+                }
+            })
+            .set_fulfill([&] (Cluster* c){
+                if (c->merge_lvl() < nlevels-1) fwd_merge.fulfill_promise(c->get_parent());
+            })
+            .set_name([](Cluster* c) {
+                return "fwd_spars_" + to_string(c->get_order());
+            })
+            .set_priority([&](Cluster*) {
+                return 5;
+            });
+
+        fwd_merge.set_mapping([&] (Cluster* c){
+                return c->get_order()%ttor_threads; 
+            })
+            .set_indegree([&](Cluster* c){
+                return c->children.size();
+            })
+            .set_task([&] (Cluster* c) {
+                merge_fwd(c);
+            })
+            .set_fulfill([&] (Cluster* c){
+                if (c->merge_lvl() ==  c->lvl()){
+                    fwd_geqrt.fulfill_promise(c);
+                }
+                else if (c->interior_deps == 0){
+                    fwd_spars.fulfill_promise(c);
+                }
+            })
+            .set_name([](Cluster* c) {
+                return "fwd_merge_" + to_string(c->get_order());
+            })
+            .set_priority([&](Cluster*) {
+                return 5;
+            });
+
+        for(auto c: this->interiors[0]){
+            fwd_geqrt.fulfill_promise(c);
         }
-        // Scaling 
-        if (l>=skip && l< nlevels-2  && this->tol != 0){
-            for (auto self: this->interfaces2sparsify[l]){
-                scaleD_fwd(self);
+
+        for (auto self: this->interfaces[0]){ 
+            if (self->interior_deps == 0){
+                fwd_spars.fulfill_promise(self);
             }
         }
-        // Sparsification
-        if (l>=skip && l< nlevels-2  && this->tol != 0){
-            for (auto self: this->interfaces2sparsify[l]){
-                orthogonalD_fwd(self);
-            }
-        }
+        tp.join();
+
+        // // Elmn
+        // for (auto self: this->interiors[l]){
+        //     QR_fwd(self);
+        // }
+        // // Scaling 
+        // if (l>=skip && l< nlevels-2  && this->tol != 0){
+        //     for (auto self: this->interfaces2sparsify[l]){
+        //         scaleD_fwd(self);
+        //     }
+        // }
+        // // Sparsification
+        // if (l>=skip && l< nlevels-2  && this->tol != 0){
+        //     for (auto self: this->interfaces2sparsify[l]){
+        //         orthogonalD_fwd(self);
+        //     }
+        // }
         
-        // Merge
-        if (l < nlevels-1){
-            for (auto self: this->bottoms[l+1]){
-                merge_fwd(self);
-            }
-        }
+        // // Merge
+        // if (l < nlevels-1){
+        //     for (auto self: this->bottoms[l+1]){
+        //         merge_fwd(self);
+        //     }
+        // }
 
     }
 

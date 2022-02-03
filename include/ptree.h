@@ -59,6 +59,9 @@ private:
 	int verb; // For ttor debugging
 	int ttor_log; // For ttor logging and profiling
 
+	/* Helper */
+	bool want_sparsify(Cluster*) const;
+
 	// Methods needed for elimination
 	void alloc_fillin(Cluster*, Cluster*);
 	void geqrt_cluster(Cluster*);

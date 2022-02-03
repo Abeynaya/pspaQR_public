@@ -33,7 +33,8 @@ ClusterID merge_if(ClusterID& c, int lvl) {
 
 
 int Cluster::get_order() const {return order;}
-int Cluster::get_level() const {return id.self.lvl;} // Get level of the cluster
+int Cluster::lvl() const {return id.self.lvl;} // Get level of the cluster
+int Cluster::merge_lvl() const {return merge_level;}
 int Cluster::cols() const {return csize;}
 int Cluster::rows() const {return rsize;}
 void Cluster::set_rank(int r){rank = r;}

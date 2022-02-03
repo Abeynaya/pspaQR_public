@@ -133,6 +133,7 @@ private:
     int rsize; // number of rows assosciated with the cluster
     ClusterID id; 
     int order; // Elimination order
+    int merge_level; // Level of merging in the cluster heirarchy
     bool eliminated;
     int rank; // to store the rank after sparsification
 
@@ -173,6 +174,7 @@ private:
     std::mutex mutex_edgeInFillin;
 
 
+
 public: 
     int rposparent; // row position in the parent
     int cposparent; // column position in the parent
@@ -192,12 +194,13 @@ public:
     /* Solution to A' xt=b */
     Eigen::VectorXd* xt = nullptr; // A'xt = b
 
+    long unsigned int interior_deps = 0;
 
 
 public:
     /* Methods */
-    Cluster(int cstart_, int csize_, int rstart_, int rsize_, ClusterID id_, int order_) :
-            cstart(cstart_), csize(csize_), rstart(rstart_), rsize(rsize_), id(id_), order(order_), eliminated(false)
+    Cluster(int cstart_, int csize_, int rstart_, int rsize_, ClusterID id_, int order_, int merge_lvl_) :
+            cstart(cstart_), csize(csize_), rstart(rstart_), rsize(rsize_), id(id_), order(order_), merge_level(merge_lvl_), eliminated(false)
             {
                 assert(rstart >= 0);
                 set_size(rsize_, csize_);
@@ -228,7 +231,8 @@ public:
     bool is_twin(Cluster* n); // is n the other part of the cluster
 
     int get_order() const; 
-    int get_level() const; 
+    int lvl() const; 
+    int merge_lvl() const;
     int cols() const;
     int rows() const;
     void set_rank(int r);

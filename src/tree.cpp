@@ -28,7 +28,7 @@ tuple<int,int> Tree::topsize() {
     int top_csize = 0;
     int top_rsize = 0; // Number of rows
     for (auto self: this->bottom_current()){
-        if (self->get_level() == this->nlevels-1){
+        if (self->lvl() == this->nlevels-1){
             top_csize += self->cols();
             top_rsize += self->rows();
         }
@@ -448,7 +448,7 @@ void Tree::update_edges(Cluster* snew){
     // Allocate memory and create new edges
     for (auto n: snew->cnbrs){
         Edge* e = add_edge(snew, n);
-        if (snew->get_level()> this->ilvl+1 && n->get_level()> this->ilvl+1 && snew != n){
+        if (snew->lvl()> this->ilvl+1 && n->lvl()> this->ilvl+1 && snew != n){
             snew->add_edge_spars_out(e);
             n->add_edge_spars_in(e);
         }
@@ -588,7 +588,7 @@ void Tree::diagScale(Cluster* c){
 
 /* Sparsify only if left and right neighbors are eliminated */
 bool Tree::want_sparsify(Cluster* c){
-    if (c->get_level() > this->ilvl){
+    if (c->lvl() > this->ilvl){
         SepID left = c->get_id().l;
         SepID right = c->get_id().r;
         if (left.lvl <= this->ilvl && right.lvl <= this->ilvl) 
@@ -678,7 +678,7 @@ void Tree::partition(SpMat& A){
         }
 
         assert(nr2c != 0);
-        Cluster* self = new Cluster(k, knext-k, l, nr2c, cid, get_new_order());
+        Cluster* self = new Cluster(k, knext-k, l, nr2c, cid, get_new_order(),0);
         this->bottoms[0].push_back(self);
         if (cid.level()==0) {
             interiors[0].push_back(self);
@@ -703,11 +703,11 @@ void Tree::partition(SpMat& A){
 
     /* Set parent and children and build the cluster heirarchy */
     for (int lvl=1; lvl < nlevels; ++lvl){
-        auto begin = find_if(bottoms[lvl-1].begin(), bottoms[lvl-1].end(), [lvl](const Cluster* s){return s->get_level() >= lvl;});
+        auto begin = find_if(bottoms[lvl-1].begin(), bottoms[lvl-1].end(), [lvl](const Cluster* s){return s->lvl() >= lvl;});
         auto end = bottoms[lvl-1].end();
 
         for(auto self = begin; self != end; self++){
-            assert((*self)->get_level() >= lvl);
+            assert((*self)->lvl() >= lvl);
             auto cid = (*self)->get_id();
             (*self)->set_parentid(merge_if(cid, lvl));
         }
@@ -726,7 +726,7 @@ void Tree::partition(SpMat& A){
                 children_rsize += (*k)->rows();
                 k++;
             }
-            Cluster* parent = new Cluster(children_cstart, children_csize, children_rstart, children_rsize, idparent, get_new_order());
+            Cluster* parent = new Cluster(children_cstart, children_csize, children_rstart, children_rsize, idparent, get_new_order(), lvl);
             // Include parent cluster with all the children
             for (auto c: children){
                 assert(parent != nullptr);
@@ -806,7 +806,7 @@ void Tree::assemble(SpMat& A){
                 self->add_self_edge(e);
             }
 
-            if (self->get_level()>0 && nbr->get_level()>0 && self != nbr){
+            if (self->lvl()>0 && nbr->lvl()>0 && self != nbr){
                 self->add_edge_spars_out(e);
                 nbr->add_edge_spars_in(e);
             }
@@ -1007,7 +1007,7 @@ void Tree::sparsify(Cluster* c){
     int cf_csize = c->cols()-rank;
     int cf_rstart = c->get_rstart() + c->rows()- cf_csize;
     int cf_rsize = cf_csize;
-    Cluster * cf = new Cluster(cf_cstart, cf_csize, cf_rstart, cf_rsize, c->get_id(), get_new_order());
+    Cluster * cf = new Cluster(cf_cstart, cf_csize, cf_rstart, cf_rsize, c->get_id(), get_new_order(), this->ilvl);
 
     this->ops.push_back(new Split(c,cf));
     if (!this->square) this->tops.push_back(new tSplit(c,cf));
@@ -1114,7 +1114,7 @@ void Tree::sparsifyD(Cluster* c){
     int cf_csize = c->cols()-rank;
     int cf_rstart = c->get_rstart() + c->cols() - cf_csize;
     int cf_rsize = cf_csize;
-    Cluster * cf = new Cluster(cf_cstart, cf_csize, cf_rstart, cf_rsize, c->get_id(), get_new_order());
+    Cluster * cf = new Cluster(cf_cstart, cf_csize, cf_rstart, cf_rsize, c->get_id(), get_new_order(), this->ilvl);
 
     
     this->ops.push_back(new SplitD(c, cf, rank));
@@ -1234,7 +1234,7 @@ void Tree::sparsifyD_imp(Cluster* c){
     int cf_csize = c->cols()-rank;
     int cf_rstart = c->get_rstart() + c->cols()- cf_csize;
     int cf_rsize = cf_csize;
-    Cluster * cf = new Cluster(cf_cstart, cf_csize, cf_rstart, cf_rsize, c->get_id(), get_new_order());
+    Cluster * cf = new Cluster(cf_cstart, cf_csize, cf_rstart, cf_rsize, c->get_id(), get_new_order(), this->ilvl);
 
     
     this->ops.push_back(new SplitD(c, cf, rank));
@@ -1357,7 +1357,7 @@ int Tree::factorize(){
         auto vstart = systime();
         {
             for (auto self: this->bottom_current()){
-                if (self->get_level() == this->ilvl){
+                if (self->lvl() == this->ilvl){
                     this->get_sparsity(self);
                 }
             }
@@ -1368,7 +1368,7 @@ int Tree::factorize(){
         // Eliminate
         {      
             for (auto self: this->bottom_current()){
-                if (self->get_level() == this->ilvl){
+                if (self->lvl() == this->ilvl){
                     assert(self->is_eliminated() == false);
                     auto elmn0 = systime();
                     this->eliminate_cluster(self);
@@ -1388,7 +1388,7 @@ int Tree::factorize(){
             if (this->ilvl < nlevels-1){
                 for (auto self: this->bottom_current()){
                     if (self->is_eliminated() && !(this->square)){
-                        assert(self->get_level() == this->ilvl);
+                        assert(self->lvl() == this->ilvl);
                         this->reassign_rows(self);
                     }
                 }
@@ -1568,7 +1568,7 @@ Tree:: ~Tree(){
 
     for(int lvl = 0; lvl < this->nlevels; lvl++) {
         for(auto s : bottoms[lvl]){
-            if (s->get_level() == lvl){
+            if (s->lvl() == lvl){
                 for(auto e : s->edgesOut) {
                     delete e;
                 }
