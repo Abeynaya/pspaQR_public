@@ -1024,7 +1024,7 @@ void ParTree::solve(VectorXd b, VectorXd& x) const{
         #endif
 
         // Threadpool
-        Threadpool_shared tp(ttor_threads, verb, "solve_" + to_string(ilvl)+"_");
+        Threadpool_shared tp(ttor_threads, verb, "solve_");
         /* Elimination */
         Taskflow<Cluster*> fwd_geqrt(&tp, verb);
         Taskflow<EdgeIt> fwd_tsqrt(&tp, verb);
@@ -1085,9 +1085,6 @@ void ParTree::solve(VectorXd b, VectorXd& x) const{
                 if (eit_next != c->edgesOut.end()){
                     fwd_tsqrt.fulfill_promise(eit_next);
                 }
-                // else {
-                //    cout << c->get_id() << endl << c->get_x()->segment(0,c->rows()) << endl;
-                // }
                 // Sparsification or merge
                 fwd_spars.fulfill_promise(n); // always
             })
@@ -1166,60 +1163,139 @@ void ParTree::solve(VectorXd b, VectorXd& x) const{
             }
         }
         tp.join();
-
-        // // Elmn
-        // for (auto self: this->interiors[l]){
-        //     QR_fwd(self);
-        // }
-        // // Scaling 
-        // if (l>=skip && l< nlevels-2  && this->tol != 0){
-        //     for (auto self: this->interfaces2sparsify[l]){
-        //         scaleD_fwd(self);
-        //     }
-        // }
-        // // Sparsification
-        // if (l>=skip && l< nlevels-2  && this->tol != 0){
-        //     for (auto self: this->interfaces2sparsify[l]){
-        //         orthogonalD_fwd(self);
-        //     }
-        // }
-        
-        // // Merge
-        // if (l < nlevels-1){
-        //     for (auto self: this->bottoms[l+1]){
-        //         merge_fwd(self);
-        //     }
-        // }
-
     }
 
     // Bwd
-    for (int l=nlevels-1; l>=0; --l){
-        // Sparsification
-        if (l>=skip && l< nlevels-2  && this->tol != 0){
-            for (auto self: this->interfaces2sparsify[l]){
-                orthogonalD_bwd(self);
-            }
+    {
+        const int ttor_threads = n_threads;
+        #ifdef USE_MKL
+            mkl_set_num_threads(1);
+            mkl_set_dynamic(0); // no dynamic multi-threading
+        #else
+            openblas_set_num_threads(1);
+        #endif
+
+        // Threadpool
+        Threadpool_shared tp(ttor_threads, verb, "solve_");
+        /* Elimination */
+        Taskflow<Cluster*> bwd_geqrt(&tp, verb);
+        /* Scale and Sparsify */
+        Taskflow<Cluster*> bwd_spars(&tp, verb);
+        /* Merge */
+        Taskflow<Cluster*> bwd_merge(&tp, verb);
+
+        bwd_geqrt.set_mapping([&] (Cluster* c){
+                return (c->get_order()+1)%ttor_threads; 
+            })
+            .set_indegree([](Cluster* c){
+                if (c->edgesIn.size() == 0) return (unsigned long )1; // only at last level and will be seeded
+                return c->edgesIn.size(); 
+            })
+            .set_task([&] (Cluster* c) {
+                QR_bwd(c);
+            })
+            .set_fulfill([&] (Cluster* c){
+                // Fulfill merge 
+                bwd_merge.fulfill_promise(c);
+            })
+            .set_name([](Cluster* c) {
+                return "bwd_geqrt_" + to_string(c->get_order());
+            })
+            .set_priority([&](Cluster*) {
+                return 6;
+            });
+
+        bwd_merge.set_mapping([&] (Cluster* c){
+                return c->get_order()%ttor_threads; 
+            })
+            .set_indegree([&](Cluster* c){
+                return 1;
+            })
+            .set_task([&] (Cluster* c) {
+                merge_bwd(c);
+            })
+            .set_fulfill([&] (Cluster* c){
+                // Fulfill bwd_spars on the children 
+                for (auto child: c->children){
+                    bwd_spars.fulfill_promise(child);
+                }
+                // // Fulfill bwd_qr on interiors at this level 
+                // if (c->merge_lvl()>0){
+                //     for (auto interior: interiors[c->merge_lvl()-1]){
+                //         bwd_geqrt.fulfill_promise(interior);
+                //     }
+                // }
+            })
+            .set_name([](Cluster* c) {
+                return "bwd_merge_" + to_string(c->get_order());
+            })
+            .set_priority([&](Cluster*) {
+                return 5;
+            });
+
+        bwd_spars.set_mapping([&] (Cluster* c){
+                return c->get_order()%ttor_threads; 
+            })
+            .set_indegree([&](Cluster* c){
+                return 1;
+            })
+            .set_task([&] (Cluster* c) {
+                // Apply Q from spars and R from scaling
+                if (want_sparsify(c)){
+                    orthogonalD_bwd(c); // BWD sparsification
+                    scaleD_bwd(c); // BWD scaling
+                }
+            })
+            .set_fulfill([&] (Cluster* c){
+                // Fulfill bwd_qr on interiors that depend on c
+                for (auto eout: c->edgesOut){
+                    if (eout != nullptr && (eout->n2->lvl() == c->merge_lvl())){
+                        bwd_geqrt.fulfill_promise(eout->n2);
+                    }
+                }
+                // BWD merge at the previous level
+                if (c->merge_lvl()>0) bwd_merge.fulfill_promise(c);
+            })
+            .set_name([](Cluster* c) {
+                return "bwd_spars_" + to_string(c->get_order());
+            })
+            .set_priority([&](Cluster*) {
+                return 5;
+            });
+
+        for(auto c: this->interiors[nlevels-1]){
+            bwd_geqrt.fulfill_promise(c);
         }
 
-        // Scaling 
-        if (l>=skip && l< nlevels-2  && this->tol != 0){
-            for (auto self: this->interfaces2sparsify[l]){
-                scaleD_bwd(self);
-            }
-        }
-        // Elmn
-        for (auto self: this->interiors[l]){
-            QR_bwd(self);
-        }
-        
-        // Merge
-        if (l > 0){
-            for (auto self: this->bottoms[l]){
-                merge_bwd(self);
-            }
-        }
+        tp.join();
+
     }
+    // for (int l=nlevels-1; l>=0; --l){
+    //     // Sparsification
+    //     if (l>=skip && l< nlevels-2  && this->tol != 0){
+    //         for (auto self: this->interfaces2sparsify[l]){
+    //             orthogonalD_bwd(self);
+    //         }
+    //     }
+
+    //     // Scaling 
+    //     if (l>=skip && l< nlevels-2  && this->tol != 0){
+    //         for (auto self: this->interfaces2sparsify[l]){
+    //             scaleD_bwd(self);
+    //         }
+    //     }
+    //     // Elmn
+    //     for (auto self: this->interiors[l]){
+    //         QR_bwd(self);
+    //     }
+        
+    //     // Merge
+    //     if (l > 0){
+    //         for (auto self: this->bottoms[l]){
+    //             merge_bwd(self);
+    //         }
+    //     }
+    // }
     // Extract solution
     for(auto cluster : bottom_original()) {
         cluster->extract_vector(x);
