@@ -30,7 +30,6 @@
 
 typedef std::array<Edge*,2> pEdge2;
 typedef std::array<Cluster*,2> pCluster2;
-typedef std::list<Edge*>::iterator EdgeIt;
 typedef std::array<EdgeIt,3> EdgeIt3;
 
 // Define hash function for EdgeIt and inject into namespace std
@@ -83,6 +82,7 @@ private:
 
 	// Methods for solve
 	void QR_fwd(Cluster*) const;
+	void QR_tsqrt_fwd(Edge* ) const;
 	void QR_bwd(Cluster*) const;
 	void scaleD_fwd(Cluster*) const;
 	void scaleD_bwd(Cluster*) const;

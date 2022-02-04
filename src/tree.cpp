@@ -474,7 +474,8 @@ void Tree::update_edges(Cluster* snew){
                 assert(eold->A21->cols() == sold->cols());
 
                 (*found)->A21->block(nold->rposparent, sold->cposparent, nold->rows(), sold->cols()) = *(eold->A21);
-                delete eold; // just makes it a nullptr, so this is safe to do in the loop 
+                delete eold; // only frees the memory
+                eold = nullptr;  // set it to null
             }
             
         }
@@ -800,6 +801,7 @@ void Tree::assemble(SpMat& A){
 
             if (self != nbr){
                 nbr->add_edgeIn(e);
+                if (self->lvl()==0) nbr->col_interior_deps++;
             }
             else {
                 //self == nbr

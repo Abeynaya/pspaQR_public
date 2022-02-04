@@ -234,6 +234,7 @@ void ParTree::compute_new_edges(Cluster* snew){
     for (auto n: snew->cnbrs){
         Edge* e = new_edgeOut(snew, n);
         if (snew==n) snew->add_self_edge(e);
+        else if (snew->lvl() == snew->merge_lvl()) n->col_interior_deps++;
     }
 
     // Sort edges
@@ -255,7 +256,9 @@ void ParTree::compute_new_edges(Cluster* snew){
                 assert(eold->A21->cols() == sold->cols());
 
                 (*found)->A21->block(nold->rposparent, sold->cposparent, nold->rows(), sold->cols()) = *(eold->A21);
-                delete eold; // just makes it a nullptr, so this is safe to do in the loop 
+                // delete eold; // just free memory
+                delete eold->A21; // free memory
+                eold = nullptr; // set it to nullptr but it is not removed from the list
             }
             
         }
@@ -414,7 +417,6 @@ int ParTree::factorize(){
                     return 1;  // get_sparsity on c
                 })
                 .set_task([&] (pCluster2 cn) {
-                    cn[1]->interior_deps++;
                     alloc_fillin(cn[0], cn[1]);
                 })
                 .set_name([](pCluster2 cn) {
@@ -910,13 +912,40 @@ void ParTree::QR_fwd(Cluster* c) const{
             int info=-1;
             dtpmqrt_(&side, &trans, &nrows, &ncols, &k, &l, &nb, 
                                         nc->data(), &nrows, 
-                                        c->get_T(n->get_order())->data(), &k,
+                                        c->get_T(n->get_order())->data(), &nb,
                                         xc.data(), &cx_size,
                                         xn.data(), &nrows,
                                         work.data(), &info);
             assert(info == 0);
         }
     }
+}
+
+void ParTree::QR_tsqrt_fwd(Edge* e) const{
+    Cluster* c = e->n1;
+    Cluster* n = e->n2;
+    MatrixXd* A_nc = e->A21;
+    int nrows = A_nc->rows(); // will not be affected even if e->n2->rows() change b/c of sparsification
+    int ncols = 1;
+    int k = c->cols();
+    int cx_size = c->rows();
+    int nb = min(32, k);
+    Segment xc = c->get_x()->segment(0,cx_size);
+    Segment xn = n->get_x()->segment(0,nrows);
+
+    // use directly from mkl_lapack.h -- routine from mkl_lapacke.h doesn't work correctly
+    char side = 'L';
+    char trans = 'T';
+    int l=0;
+    VectorXd work = VectorXd::Zero(ncols*nb);
+    int info=-1;
+    dtpmqrt_(&side, &trans, &nrows, &ncols, &k, &l, &nb, 
+                                A_nc->data(), &nrows, 
+                                c->get_T(n->get_order())->data(), &nb,
+                                xc.data(), &cx_size,
+                                xn.data(), &nrows,
+                                work.data(), &info);
+    assert(info == 0);
 }
 
 void ParTree::QR_bwd(Cluster* c) const{
@@ -961,7 +990,6 @@ void ParTree::merge_fwd(Cluster* parent) const{
             ++k;
         }
     }
-    cout << parent->get_id() << endl <<  *parent->get_x() << endl;
 }
 
 void ParTree::merge_bwd(Cluster* parent) const{ 
@@ -1036,39 +1064,17 @@ void ParTree::solve(VectorXd b, VectorXd& x) const{
 
         fwd_tsqrt.set_mapping([&] (EdgeIt eit){
                 Edge* e = *eit;
-                return (e->n2->get_order() + 1)%ttor_threads;  // Important to avoid race conditions
+                return e->n2->get_order() % ttor_threads;  // Important to avoid race conditions
             })
-            .set_indegree([](EdgeIt){ // e->A21 = A_cn
-                return 1; // geqrt on e->n1
+            .set_indegree([](EdgeIt eit){ // e->A21 = A_cn
+                Edge* e = *eit;
+                return (e->n1->merge_lvl()==0 ? 1:2); // geqrt on e->n1 and merge
             })
             .set_binding([] (EdgeIt){
                 return true; 
             })
             .set_task([&] (EdgeIt eit) {
-                Cluster* c = (*eit)->n1;
-                Cluster* n = (*eit)->n2;
-                MatrixXd* A_nc = (*eit)->A21;
-                int nrows = A_nc->rows(); // will not be affected even if e->n2->rows() change b/c of sparsification
-                int ncols = 1;
-                int k = c->cols();
-                int cx_size = c->rows();
-                int nb = min(32, k);
-                Segment xc = c->get_x()->segment(0,cx_size);
-                Segment xn = n->get_x()->segment(0,nrows);
-
-                // use directly from mkl_lapack.h -- routine from mkl_lapacke.h doesn't work correctly
-                char side = 'L';
-                char trans = 'T';
-                int l=0;
-                VectorXd work = VectorXd::Zero(ncols*nb);
-                int info=-1;
-                dtpmqrt_(&side, &trans, &nrows, &ncols, &k, &l, &nb, 
-                                            A_nc->data(), &nrows, 
-                                            c->get_T(n->get_order())->data(), &k,
-                                            xc.data(), &cx_size,
-                                            xn.data(), &nrows,
-                                            work.data(), &info);
-                assert(info == 0);
+                QR_tsqrt_fwd(*eit);
             })
             .set_fulfill([&] (EdgeIt eit){
                 auto eit_next = eit;
@@ -1079,6 +1085,9 @@ void ParTree::solve(VectorXd b, VectorXd& x) const{
                 if (eit_next != c->edgesOut.end()){
                     fwd_tsqrt.fulfill_promise(eit_next);
                 }
+                // else {
+                //    cout << c->get_id() << endl << c->get_x()->segment(0,c->rows()) << endl;
+                // }
                 // Sparsification or merge
                 fwd_spars.fulfill_promise(n); // always
             })
@@ -1094,12 +1103,12 @@ void ParTree::solve(VectorXd b, VectorXd& x) const{
                 return c->get_order()%ttor_threads; 
             })
             .set_indegree([&](Cluster* c){
-                if (c->interior_deps == 0) return (unsigned long)1;
-                return c->interior_deps;
+                if (c->col_interior_deps==0) return (unsigned long int)1;
+                return c->col_interior_deps; 
             })
             .set_task([&] (Cluster* c) {
+                // Apply Q from scaling and spars if any
                 if (want_sparsify(c)){
-                    cout << "here" << endl;
                     scaleD_fwd(c); // FWD scaling
                     orthogonalD_fwd(c); // FWD sparsification
                 }
@@ -1127,8 +1136,17 @@ void ParTree::solve(VectorXd b, VectorXd& x) const{
                 if (c->merge_lvl() ==  c->lvl()){
                     fwd_geqrt.fulfill_promise(c);
                 }
-                else if (c->interior_deps == 0){
+                else if (c->col_interior_deps == 0) {
                     fwd_spars.fulfill_promise(c);
+                }
+                else {
+                    for (auto ein: c->edgesIn){
+                        if (ein != nullptr && (ein->n1->lvl() == c->merge_lvl())){
+                            auto eit = find_if(ein->n1->edgesOut.begin(), ein->n1->edgesOut.end(), [&c](Edge* e){return e->n2 == c;});
+                            assert(eit != ein->n1->edgesOut.end());
+                            fwd_tsqrt.fulfill_promise(eit);
+                        }
+                    }
                 }
             })
             .set_name([](Cluster* c) {
@@ -1143,7 +1161,7 @@ void ParTree::solve(VectorXd b, VectorXd& x) const{
         }
 
         for (auto self: this->interfaces[0]){ 
-            if (self->interior_deps == 0){
+            if (self->col_interior_deps == 0){
                 fwd_spars.fulfill_promise(self);
             }
         }

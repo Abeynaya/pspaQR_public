@@ -14,8 +14,10 @@
 #include "util.h"
 
 typedef Eigen::SparseMatrix<double, 0, int> SpMat;
-
 struct Edge;
+
+typedef std::list<Edge*>::iterator EdgeIt;
+
 
 /*Separator ID: gives level and separator index
   in that level
@@ -194,7 +196,7 @@ public:
     /* Solution to A' xt=b */
     Eigen::VectorXd* xt = nullptr; // A'xt = b
 
-    long unsigned int interior_deps = 0;
+    unsigned long int col_interior_deps=0;
 
 
 public:
