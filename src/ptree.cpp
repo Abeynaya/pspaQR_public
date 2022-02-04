@@ -1219,12 +1219,6 @@ void ParTree::solve(VectorXd b, VectorXd& x) const{
                 for (auto child: c->children){
                     bwd_spars.fulfill_promise(child);
                 }
-                // // Fulfill bwd_qr on interiors at this level 
-                // if (c->merge_lvl()>0){
-                //     for (auto interior: interiors[c->merge_lvl()-1]){
-                //         bwd_geqrt.fulfill_promise(interior);
-                //     }
-                // }
             })
             .set_name([](Cluster* c) {
                 return "bwd_merge_" + to_string(c->get_order());
@@ -1268,34 +1262,8 @@ void ParTree::solve(VectorXd b, VectorXd& x) const{
         }
 
         tp.join();
-
     }
-    // for (int l=nlevels-1; l>=0; --l){
-    //     // Sparsification
-    //     if (l>=skip && l< nlevels-2  && this->tol != 0){
-    //         for (auto self: this->interfaces2sparsify[l]){
-    //             orthogonalD_bwd(self);
-    //         }
-    //     }
 
-    //     // Scaling 
-    //     if (l>=skip && l< nlevels-2  && this->tol != 0){
-    //         for (auto self: this->interfaces2sparsify[l]){
-    //             scaleD_bwd(self);
-    //         }
-    //     }
-    //     // Elmn
-    //     for (auto self: this->interiors[l]){
-    //         QR_bwd(self);
-    //     }
-        
-    //     // Merge
-    //     if (l > 0){
-    //         for (auto self: this->bottoms[l]){
-    //             merge_bwd(self);
-    //         }
-    //     }
-    // }
     // Extract solution
     for(auto cluster : bottom_original()) {
         cluster->extract_vector(x);
