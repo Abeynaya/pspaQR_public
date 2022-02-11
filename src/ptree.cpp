@@ -40,6 +40,33 @@ bool ParTree::want_sparsify(Cluster* c) const{
     return false;
 }
 
+int ParTree::get_rank(int part, int mergelvl){
+    int nparts_lvl = nparts(); 
+    for (int lvl=0; lvl < mergelvl; lvl++){
+        nparts_lvl /= 2;
+    }
+
+    int rank_lvl = 0;
+    if(nparts_lvl > nranks()) {
+        int parts_per_rank = nparts_lvl / nranks();
+        rank_lvl = (part / parts_per_rank);
+    } else { 
+        rank_lvl = part;
+    }
+    assert(rank_lvl >= 0);
+    assert(rank_lvl < nranks());
+    return rank_lvl;
+}
+
+int ParTree::cluster2rank(Cluster* c){
+    int mergelvl = c->merge_lvl();
+    int part = c->part();
+    return get_rank(part, mergelvl);
+}
+int ParTree::edge2rank(Edge* e) {
+    return cluster2rank(e->n1);
+}
+
 /* Add an edge between c1 and c2
  such that A(c2, c1) block is non-zero */
 Edge* ParTree::new_edgeOut(Cluster* c1, Cluster* c2){
@@ -98,6 +125,74 @@ void ParTree::alloc_fillin(Cluster* c, Cluster* n){
         }
     }
     return;
+}
+
+void ParTree::assemble(SpMat& A){
+    // All ranks have all Clusters
+    // Create all edges but only fill the local ones --- TODO 
+    auto astart = systime();
+    int r = A.rows();
+    int c = A.cols();
+    this->nnzA = A.nonZeros();
+    
+    // Permute the matrix
+    SpMat ApT = col_perm(A, this->cperm).transpose();
+    SpMat App = col_perm(ApT, this->rperm).transpose();
+    App.makeCompressed(); 
+
+    // Get CSC format  
+    int nnz = App.nonZeros();
+    VectorXi rowval = Map<VectorXi>(App.innerIndexPtr(), nnz);
+    VectorXi colptr = Map<VectorXi>(App.outerIndexPtr(), c + 1);
+    VectorXd nnzval = Map<VectorXd>(App.valuePtr(), nnz);
+
+    // Get cmap and rmap
+    vector<Cluster*> cmap(c);
+    vector<Cluster*> rmap(r);
+    for (auto self : bottom_original()){
+        for(int k=self->get_cstart(); k< self->get_cstart()+self->cols(); ++k){cmap[k]=self;}
+        for(int i=self->get_rstart(); i< self->get_rstart()+self->rows(); ++i){rmap[i]=self;}
+    }
+
+    // Assemble edges
+    for (auto self: bottom_original()){
+        set<Cluster*> cnbrs; // Non-zeros entries in the column belonging to self/another cluster
+        for (int j= self->get_cstart(); j < self->get_cstart()+self->cols(); ++j){
+            for (SpMat::InnerIterator it(App,j); it; ++it){
+                Cluster* n = rmap[it.row()];
+                cnbrs.insert(n);
+            }
+        }
+        cnbrs.insert(self);
+
+        for (auto nbr: cnbrs){
+            MatrixXd* sA = new MatrixXd(nbr->rows(), self->cols());
+            sA->setZero();
+            block2dense(rowval, colptr, nnzval, nbr->get_rstart(), self->get_cstart(), nbr->rows(), self->cols(), sA, false); 
+            Edge* e = new Edge(self, nbr, sA);
+            self->add_edgeOut(e);
+
+            if (self != nbr){
+                nbr->add_edgeIn(e);
+                if (self->lvl()==0) nbr->col_interior_deps++;
+            }
+            else {
+                //self == nbr
+                self->add_self_edge(e);
+            }
+
+            if (self->lvl()>0 && nbr->lvl()>0 && self != nbr){
+                self->add_edge_spars_out(e);
+                nbr->add_edge_spars_in(e);
+            }
+        }
+
+        self->sort_edgesOut();
+        self->cnbrs = cnbrs;
+    }
+    auto aend = systime();
+    cout << "Time to assemble: " << elapsed(astart, aend)  << endl;
+    cout << "Aspect ratio of top separator: " << (double)get<0>(topsize())/(double)get<1>(topsize()) << endl;
 }
 
 /* Elimination */
@@ -356,7 +451,8 @@ int ParTree::factorize(){
         int blas_threads;
         int ttor_threads;
 
-        // Find fill-in and allocate memory
+        // Find fill-in and allocate memory 
+        // All ranks do this for now --- CHANGE: TODO
         {
             blas_threads=1;
             ttor_threads=n_threads;
@@ -377,7 +473,8 @@ int ParTree::factorize(){
             }
 
             // Threadpool
-            Threadpool_shared tp(ttor_threads, verb, "fillin_"+ to_string(ilvl)+"_");
+            Communicator comm(MPI_COMM_WORLD,0);
+            Threadpool_dist tp(ttor_threads, &comm, verb, "fillin_"+ to_string(ilvl)+"_");
             Taskflow<Cluster*> get_sparsity_tf(&tp, verb);
             Taskflow<pCluster2> fillin_tf(&tp, verb);
 
@@ -386,6 +483,7 @@ int ParTree::factorize(){
                 tp.set_logger(&log);
             }
 
+            // For geometric partitioning this will happen locally on each cluster -- no need for comm 
             get_sparsity_tf.set_mapping([&] (Cluster* c){
                     return c->get_order()%ttor_threads; 
                 })
@@ -471,8 +569,9 @@ int ParTree::factorize(){
             assert(ttor_threads <= n_threads);
 
             // Threadpool
-            Threadpool_shared tp(ttor_threads, verb, "elmn_" + to_string(ilvl)+"_");
-            /* Elimination */
+            Communicator comm(MPI_COMM_WORLD);
+            Threadpool_dist tp(ttor_threads, &comm, verb, "elmn_" + to_string(ilvl)+"_");
+            /* Elimination */ 
             Taskflow<Cluster*> geqrt_tf(&tp, verb);
             Taskflow<EdgeIt> larfb_tf(&tp, verb);
             Taskflow<EdgeIt3> ssrfb_tf(&tp, verb);
@@ -504,6 +603,21 @@ int ParTree::factorize(){
                 // log = Logger(10000000);
                 tp.set_logger(&log);
             }
+            auto geqrt_2_larfb_am = comm.make_active_msg(
+                [&] (view<double>& U_data, view<double>& T_data, view<int>& larfb_deps, int& c_order, int& crows, int& ccols){
+                    Cluster* c = get_cluster_local(c_order);
+                    *c->self_edge()->A21 = make_matrix(U_data, crows, ccols);
+                    for (auto e:c->edgesOut){
+                        c->create_T(e->n2->get_order());
+                    }
+                    MatrixXd Tmat = make_matrix(T_data, ccols);
+                    c->set_T(c->get_order(), make_matrix());
+                    for (int norder: larfb_deps){
+                        auto eit = find_out_edge(c, norder);
+                        assert(eit->n1->comm_rank()==my_rank);
+                        larfb_tf.fulfill_promise(eit);
+                    }
+                });
 
             geqrt_tf.set_mapping([&] (Cluster* c){
                     return (c->get_order()+1)%ttor_threads; 
@@ -516,10 +630,30 @@ int ParTree::factorize(){
                 })
                 .set_fulfill([&] (Cluster* c){
                     // All larfb
+                    map<int,vector<int>> send_to;
                     for (EdgeIt it=c->edgesIn.begin(); it!=c->edgesIn.end(); ++it){ // All the edges that need to be updated
-                        larfb_tf.fulfill_promise(it);
+                        int dest = edge2rank(*it);
+                        if(dest == my_rank) larfb_tf.fulfill_promise(it);
+                        else {
+                            send_to[dest].push_back((*it)->n2->get_order());
+                        }
                     }
-                    // First tsqrt
+
+                    if (send_to.size() > 0){
+                        auto U_view = view(c->self_edge()->A21);
+                        auto T_view = view(c->get_T(c->get_order()));
+                        int crows = c->rows();
+                        int ccols = c->cols();
+                        int corder = c->get_order();
+
+                    
+                        for (auto& r: send_to ){
+                            auto larfb_deps = view(&r.second);
+                            geqrt_2_larfb_am->send(r.first, U_view, T_view, larfb_deps, corder, crows, ccols);
+                        }
+                    }
+
+                    // First tsqrt -- same rank
                     auto c_edge_it = c->edgesOut.begin();
                     assert((*c_edge_it)->n2 == c); // first edgeout is c itself when c is at leaf level
                     c_edge_it++;
@@ -597,10 +731,21 @@ int ParTree::factorize(){
                     c_edge_it++;
                     Cluster* m = (*it[1])->n1;
                     if (c_edge_it != c->edgesOut.end()){
-                        Edge* eout = *c_edge_it;
-                        Cluster*  n = eout->n2;
-                        auto found = find_out_edge(m,n);
-                        ssrfb_tf.fulfill_promise({c_edge_it, it[1], found}); // cn, cm, mn
+                        int dest = cluster2rank(m);
+                        if(dest == my_rank) {
+                            Edge* eout = *c_edge_it;
+                            Cluster*  n = eout->n2;
+                            auto found = find_out_edge(m,n);
+                            ssrfb_tf.fulfill_promise({c_edge_it, it[1], found}); // cn, cm, mn
+                        }
+                        else {
+                            to_send[dest].push_back(m->get_order());
+                        }
+                    }
+
+                    if (send_to.size() > 0){
+                        auto U_view = view((*c_edge_it)->A21);
+                        auto T_view = view(c->get_T(n->get_order()));
                     }
 
                 })
@@ -615,7 +760,22 @@ int ParTree::factorize(){
                     return 3;
                 });
 
-            // should I bind this to get better memory access times?
+            auto tsqrt_2_ssrfb_am = comm.make_active_msg(
+                [&] (view<double>& U_data, view<double>& T_data, view<int>& ssrfb_deps, int& cn_order, int& cn_rows, int& c_cols){
+                    Cluster* c = get_cluster_local(c_order);
+                    *c->self_edge()->A21 = make_matrix(U_data, crows, ccols);
+                    for (auto e:c->edgesOut){
+                        c->create_T(e->n2->get_order());
+                    }
+                    MatrixXd Tmat = make_matrix(T_data, ccols);
+                    c->set_T(c->get_order(), make_matrix());
+                    for (int norder: larfb_deps){
+                        auto eit = find_out_edge(c, norder);
+                        assert(eit->n1->comm_rank()==my_rank);
+                        larfb_tf.fulfill_promise(eit);
+                    }
+                });
+
             tsqrt_tf.set_mapping([&] (EdgeIt eit){
                     Edge* e = *eit;
                     return (e->n1->get_order() + 1)%ttor_threads;  
@@ -636,6 +796,7 @@ int ParTree::factorize(){
                         tsqrt_tf.fulfill_promise(eit_next);
                     }
                     // All ssrfb in its row
+                    map<int,vector<int>> send_to;
                     for (EdgeIt it=c->edgesIn.begin(); it!=c->edgesIn.end(); ++it){ // All the edges that need to be updated
                         Cluster* m = (*it)->n1;
                         auto found = find_out_edge(m,n);
@@ -767,13 +928,13 @@ int ParTree::factorize(){
             estart = systime();
             {
                 for (auto self: this->interiors_current()){ 
-                    geqrt_tf.fulfill_promise(self);
+                    if (cluster2rank(self)== my_rank) geqrt_tf.fulfill_promise(self);
                 }
 
                 for (auto self: this->interfaces_current()){ 
                     if (this->ilvl < nlevels-2  && this->ilvl >= skip && this->tol != 0){
                         if (self->self_edge()->interior_deps == 0){
-                            scale_geqrt_tf.fulfill_promise(self);
+                            if (cluster2rank(self)==my_rank) scale_geqrt_tf.fulfill_promise(self);
                         }
                     }
                 }

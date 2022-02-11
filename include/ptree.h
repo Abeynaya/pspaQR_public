@@ -54,12 +54,17 @@ struct std::hash<EdgeIt>
 class ParTree: public Tree
 {
 private:
+	int my_rank;
+	int n_ranks;
 	int n_threads;
 	int verb; // For ttor debugging
 	int ttor_log; // For ttor logging and profiling
 
 	/* Helper */
 	bool want_sparsify(Cluster*) const;
+
+	/* Setup */
+	void assemble(SpMat& A);
 
 	// Methods needed for elimination
 	void alloc_fillin(Cluster*, Cluster*);
@@ -99,7 +104,8 @@ public:
 	void set_ttor_log(int);
 
 
-	ParTree(int nlevels_, int skip_) : Tree(nlevels_, skip_) {n_threads=1;};
+	ParTree(int nlevels_, int skip_) : Tree(nlevels_, skip_), my_rank(ttor::comm_rank()),
+										n_ranks(ttor::comm_size()) {n_threads=1;};
 
 	// Add new edge 
 	Edge* new_edgeOut(Cluster*, Cluster*);
