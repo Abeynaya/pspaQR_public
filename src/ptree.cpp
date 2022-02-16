@@ -807,7 +807,7 @@ int ParTree::factorize(){
                     sold->cposparent = csize;
                     rsize += sold->rows();
                     csize += sold->cols();
-                    for (auto d2c: sold->dist2connxs) snew->dist2connxs.insert(d2c->get_parent());
+                    for (auto d2c: sold->dist2connxs) if(!d2c->is_eliminated()) snew->dist2connxs.insert(d2c->get_parent());
                 }
                 snew->set_size(rsize, csize); 
                 snew->set_org(rsize, csize);
