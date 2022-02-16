@@ -182,7 +182,8 @@ public:
     int cposparent; // column position in the parent
     std::set<Cluster*> children;
     std::set<Cluster*> rsparsity; 
-    std::set<Cluster*> dist2connxs;
+    std::set<Cluster*> dist2connxs; 
+
 
     std::set<Cluster*> cnbrs; // neigbors including self
     std::set<Cluster*> rnbrs; // neigbors including self

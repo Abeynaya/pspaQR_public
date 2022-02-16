@@ -419,7 +419,7 @@ void Tree::update_size(Cluster* snew){
         sold->cposparent = csize;
         rsize += sold->rows();
         csize += sold->cols();
-        for (auto d2c: sold->dist2connxs) snew->dist2connxs.insert(d2c->get_parent());
+        for (auto d2c: sold->dist2connxs) if(!d2c->is_eliminated()) snew->dist2connxs.insert(d2c->get_parent());
     }
     snew->set_size(rsize, csize); 
     snew->set_org(rsize, csize);
@@ -843,6 +843,23 @@ void Tree::assemble(SpMat& A){
         self->sort_edgesOut();
         self->cnbrs = cnbrs;
     }
+
+    // prepare fill-in
+    { // ONLY original distance two connections
+        SpMat AtA = App.transpose()*App; 
+        for (auto self: bottom_original()){ // at the leaf level
+            for (int col=self->get_cstart(); col < self->get_cstart()+self->cols(); ++col){
+                for (SpMat::InnerIterator it(AtA,col); it; ++it){
+                    int row = it.row();
+                    Cluster* possible_nbr = cmap[row];
+                    if (possible_nbr->lvl()>= self->lvl() && possible_nbr != self) self->dist2connxs.insert(possible_nbr);
+                    else if (possible_nbr->lvl() < self->lvl()) {
+                        self->dist2connxs.insert(possible_nbr->dist2connxs.begin(), possible_nbr->dist2connxs.end());
+                    }
+                }
+            }
+        }
+    }
     auto aend = systime();
     cout << "Time to assemble: " << elapsed(astart, aend)  << endl;
     cout << "Aspect ratio of top separator: " << (double)get<0>(topsize())/(double)get<1>(topsize()) << endl;
@@ -904,15 +921,14 @@ int Tree::eliminate_cluster(Cluster* c){
     return 0;
 }
 
+// New version of get_sparsity that uses edgesIn -- Feb 10, 2022
 void Tree::get_sparsity(Cluster* c){
     set<Cluster*> row_sparsity;
-    set<SepID> col_sparsity;
-
     row_sparsity.insert(c->dist2connxs.begin(), c->dist2connxs.end());
     for (auto edge: c->edgesIn){
         row_sparsity.insert(edge->n1);
     }
-    c->rsparsity = row_sparsity; 
+    c->rsparsity = row_sparsity;
 }
 
 void Tree::merge_all(){
