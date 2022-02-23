@@ -23,6 +23,8 @@ void Tree::set_Xcoo(Eigen::MatrixXd* Xcoo) {this->Xcoo = Xcoo;}
 int Tree::rows() const {return nrows;}
 int Tree::cols() const {return ncols;}
 int Tree::levels() const {return nlevels;}
+int Tree::nparts() const {return n_parts;}
+
 
 tuple<int,int> Tree::topsize() {
     int top_csize = 0;
@@ -780,31 +782,6 @@ void Tree::assemble(SpMat& A){
     for (auto self : bottom_original()){
         for(int k=self->get_cstart(); k< self->get_cstart()+self->cols(); ++k){cmap[k]=self;}
         for(int i=self->get_rstart(); i< self->get_rstart()+self->rows(); ++i){rmap[i]=self;}
-    }
-
-    // To help with get_sparsity
-    SpMat AppT = App.transpose();
-    AppT.makeCompressed();
-    vector<set<Cluster*>> nnz_clusters_in_row(r);
-    for (auto row=0; row < r; ++row){
-        // Loop through non-zeros in that row
-        for (SpMat::InnerIterator ot(AppT,row); ot; ++ot){
-            nnz_clusters_in_row[row].insert(cmap[ot.row()]);
-        }
-    }
-
-    for (auto self: bottom_original()){ // at the leaf level
-        for (int col=self->get_cstart(); col < self->get_cstart()+self->cols(); ++col){
-            for (SpMat::InnerIterator it(App,col); it; ++it){
-                int row = it.row();
-                if (rmap[row]!=self && rmap[row]->get_level() >= self->get_level()){
-                    for (auto possible_nbr: nnz_clusters_in_row[row]) {
-                        if (possible_nbr!=self &&
-                            possible_nbr->get_level() >= self->get_level()) self->dist2connxs.insert(possible_nbr);
-                    }
-                }
-            }
-        }
     }
 
     // Assemble edges

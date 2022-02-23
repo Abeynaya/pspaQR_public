@@ -16,16 +16,18 @@ using namespace ttor;
 void ParTree::set_nthreads(int n) { this->n_threads = n; };
 void ParTree::set_verbose(int v) { this->verb = v; };
 void ParTree::set_ttor_log(int l) { this->ttor_log = l; };
+int ParTree::nranks() const{return n_ranks;}
 
 /* Helper function */
-EdgeIt find_out_edge(Cluster* m, Cluster* n){
-    auto found = find_if(m->edgesOut.begin(), m->edgesOut.end(), [&n](Edge* e_m){return e_m->n2 == n;});
-    if (found == m->edgesOut.end()){
-        found = find_if(m->edgesOutFillin.begin(), m->edgesOutFillin.end(), [&n](Edge* e_m){return e_m->n2 == n;});
-        assert( found!= m->edgesOutFillin.end()); // Has to exist
-    }
-    return found;
-}
+// EdgeIt find_out_edge(Cluster* m, Cluster* n){
+//     auto found = find_if(m->edgesOut.begin(), m->edgesOut.end(), [&n](Edge* e_m){return e_m->n2 == n;});
+//     assert(found != m->edgesOut.end());
+//     // if (found == m->edgesOut.end()){
+//     //     found = find_if(m->edgesOutFillin.begin(), m->edgesOutFillin.end(), [&n](Edge* e_m){return e_m->n2 == n;});
+//     //     assert( found!= m->edgesOutFillin.end()); // Has to exist
+//     // }
+//     return found;
+// }
 
 bool ParTree::want_sparsify(Cluster* c) const{
     if (c->merge_lvl() < skip || c->merge_lvl() >= nlevels-2 || this->tol==0){
@@ -39,6 +41,34 @@ bool ParTree::want_sparsify(Cluster* c) const{
     }
     return false;
 }
+
+Cluster* ParTree::get_interior(int c_order) const {
+    auto found = find_if(this->interiors_current().begin(), this->interiors_current().end(), [&c_order](Cluster* n){return c_order == n->get_order();});
+    if (found == this->interiors_current().end()){
+        cout << my_rank << " " << current_bottom << " " << c_order << endl;
+    }
+    assert(found != this->interiors_current().end()); 
+    return *found; 
+}
+
+Cluster* ParTree::get_interface(int c_order) const {
+    auto found = find_if(this->interfaces_current().begin(), this->interfaces_current().end(), [&c_order](Cluster* n){return c_order == n->get_order();});
+    if (found == this->interfaces_current().end()){
+        cout << my_rank << " " << current_bottom << " " << c_order << endl;
+    }
+    assert(found != this->interfaces_current().end()); 
+    return *found; 
+}
+
+Cluster* ParTree::get_cluster(int c_order) const {
+    auto found = find_if(this->bottom_current().begin(), this->bottom_current().end(), [&c_order](Cluster* n){return c_order == n->get_order();});
+    if (found == this->bottom_current().end()){
+        cout << my_rank << " " << current_bottom << " " << c_order << endl;
+    }
+    assert(found != this->bottom_current().end()); 
+    return *found; 
+}
+
 
 int ParTree::get_rank(int part, int mergelvl){
     int nparts_lvl = nparts(); 
@@ -60,9 +90,10 @@ int ParTree::get_rank(int part, int mergelvl){
 
 int ParTree::cluster2rank(Cluster* c){
     int mergelvl = c->merge_lvl();
-    int part = c->part();
+    int part = c->section();
     return get_rank(part, mergelvl);
 }
+
 int ParTree::edge2rank(Edge* e) {
     return cluster2rank(e->n1);
 }
@@ -82,7 +113,14 @@ Edge* ParTree::new_edgeOut(Cluster* c1, Cluster* c2){
         c1->add_edge_spars_out(e);
         is_spars_nbr = true;
     }
-    if(c1 != c2) c2->add_edgeIn(e,is_spars_nbr); // thread-safe using lock_guard
+    if(c1 != c2) {
+        int dest = cluster2rank(c2);
+        if (dest == my_rank) c2->add_edgeIn(e,is_spars_nbr); // thread-safe using lock_guard
+        // else {
+        //     // A.M of an empty edge to dest
+        //     ...
+        // }
+    }
     return e; 
 }
 
@@ -101,11 +139,16 @@ Edge* ParTree::new_edgeOutFillin(Cluster* c1, Cluster* c2){
         c1->add_edge_spars_out(e);
         is_spars_nbr = true;
     }
-    if (c1 != c2) c2->add_edgeInFillin(e,is_spars_nbr); // thread-safe using lock_guard
+    if (c1 != c2) { // If distributed... c2 can reside in a different rank
+        c2->add_edgeInFillin(e,is_spars_nbr); // thread-safe using lock_guard
+        // else {
+        //     // AM send edge->n1 and edge->n2 
+        // }
+    }
     return e; 
 }
 
-void ParTree::alloc_fillin(Cluster* c, Cluster* n){
+void ParTree::alloc_fillin(Cluster* c, Cluster* n, map<int,vector<int>>& edges_to_send){
     for (auto edge: c->edgesOut){
         Cluster* nbr_c = edge->n2; 
         auto found_out = find_if(n->edgesOut.begin(), n->edgesOut.end(), [&nbr_c](Edge* e){return (e->n2 == nbr_c );});
@@ -113,7 +156,9 @@ void ParTree::alloc_fillin(Cluster* c, Cluster* n){
         if (found_out == n->edgesOut.end()){
             found_fillin = find_if(n->edgesOutFillin.begin(), n->edgesOutFillin.end(), [&nbr_c](Edge* e) {return (e->n2 == nbr_c);});
             if (found_fillin == n->edgesOutFillin.end()){ // Cannot find the edge
-                Edge* ecn = new_edgeOutFillin(n, nbr_c);
+                // Edge* ecn = new_edgeOutFillin(n, nbr_c);
+                Edge* ecn = new_edgeOut(n, nbr_c);
+                if (cluster2rank(nbr_c)!=my_rank) edges_to_send[cluster2rank(nbr_c)].push_back(nbr_c->get_order());
                 ecn->interior_deps++;
             }
             else {
@@ -127,74 +172,6 @@ void ParTree::alloc_fillin(Cluster* c, Cluster* n){
     return;
 }
 
-void ParTree::assemble(SpMat& A){
-    // All ranks have all Clusters
-    // Create all edges but only fill the local ones --- TODO 
-    auto astart = systime();
-    int r = A.rows();
-    int c = A.cols();
-    this->nnzA = A.nonZeros();
-    
-    // Permute the matrix
-    SpMat ApT = col_perm(A, this->cperm).transpose();
-    SpMat App = col_perm(ApT, this->rperm).transpose();
-    App.makeCompressed(); 
-
-    // Get CSC format  
-    int nnz = App.nonZeros();
-    VectorXi rowval = Map<VectorXi>(App.innerIndexPtr(), nnz);
-    VectorXi colptr = Map<VectorXi>(App.outerIndexPtr(), c + 1);
-    VectorXd nnzval = Map<VectorXd>(App.valuePtr(), nnz);
-
-    // Get cmap and rmap
-    vector<Cluster*> cmap(c);
-    vector<Cluster*> rmap(r);
-    for (auto self : bottom_original()){
-        for(int k=self->get_cstart(); k< self->get_cstart()+self->cols(); ++k){cmap[k]=self;}
-        for(int i=self->get_rstart(); i< self->get_rstart()+self->rows(); ++i){rmap[i]=self;}
-    }
-
-    // Assemble edges
-    for (auto self: bottom_original()){
-        set<Cluster*> cnbrs; // Non-zeros entries in the column belonging to self/another cluster
-        for (int j= self->get_cstart(); j < self->get_cstart()+self->cols(); ++j){
-            for (SpMat::InnerIterator it(App,j); it; ++it){
-                Cluster* n = rmap[it.row()];
-                cnbrs.insert(n);
-            }
-        }
-        cnbrs.insert(self);
-
-        for (auto nbr: cnbrs){
-            MatrixXd* sA = new MatrixXd(nbr->rows(), self->cols());
-            sA->setZero();
-            block2dense(rowval, colptr, nnzval, nbr->get_rstart(), self->get_cstart(), nbr->rows(), self->cols(), sA, false); 
-            Edge* e = new Edge(self, nbr, sA);
-            self->add_edgeOut(e);
-
-            if (self != nbr){
-                nbr->add_edgeIn(e);
-                if (self->lvl()==0) nbr->col_interior_deps++;
-            }
-            else {
-                //self == nbr
-                self->add_self_edge(e);
-            }
-
-            if (self->lvl()>0 && nbr->lvl()>0 && self != nbr){
-                self->add_edge_spars_out(e);
-                nbr->add_edge_spars_in(e);
-            }
-        }
-
-        self->sort_edgesOut();
-        self->cnbrs = cnbrs;
-    }
-    auto aend = systime();
-    cout << "Time to assemble: " << elapsed(astart, aend)  << endl;
-    cout << "Aspect ratio of top separator: " << (double)get<0>(topsize())/(double)get<1>(topsize()) << endl;
-}
-
 /* Elimination */
 void ParTree::geqrt_cluster(Cluster* c){
     if (c->cols()==0){
@@ -204,7 +181,7 @@ void ParTree::geqrt_cluster(Cluster* c){
     }
 
     // Combine edgesIn and edgesInFillin -- just to be consistent
-    c->combine_edgesIn(); // No race condition
+    // c->combine_edgesIn(); // No race condition
 
     // Create matrices to store triangular factor T for all edgesOut
     for (auto e: c->edgesOut){
@@ -242,12 +219,11 @@ void ParTree::tsqrt_edge(Edge* e){
 }
 
 void ParTree::larfb_edge(Edge* e){ // A12 block
-    Cluster* n = e->n1;
     Cluster* c = e->n2;
     assert(c->is_eliminated());
 
-    int nrows = e->A21->rows();
-    int ncols = e->A21->cols();
+    // int nrows = e->A21->rows();
+    // int ncols = e->A21->cols();
 
     larfb(c->self_edge()->A21, c->get_T(c->get_order()), e->A21);
     return;
@@ -312,10 +288,9 @@ void ParTree::scale_cluster(Cluster* c){
 }
 
 /* Merge */
-void ParTree::compute_new_edges(Cluster* snew){
+void ParTree::compute_new_edges(Cluster* snew, map<int,vector<int>>& edges_to_send){
     set<Cluster*> edges_merged;
     for (auto sold: snew->children){
-        sold->combine_edgesOut(); // IMPORTANT -- safe since each snew has unique children
         for (auto eold : sold->edgesOut){
             auto n = eold->n2; 
             if (!(n->is_eliminated())){
@@ -329,7 +304,9 @@ void ParTree::compute_new_edges(Cluster* snew){
     for (auto n: snew->cnbrs){
         Edge* e = new_edgeOut(snew, n);
         if (snew==n) snew->add_self_edge(e);
-        else if (snew->lvl() == snew->merge_lvl()) n->col_interior_deps++;
+        else if (snew->lvl() == snew->merge_lvl()) n->col_interior_deps++; // Needed for solve
+        // If new edgeIn has to be sent to a different rank
+        if (cluster2rank(n)!= my_rank) edges_to_send[cluster2rank(n)].push_back(n->get_order());
     }
 
     // Sort edges
@@ -346,9 +323,11 @@ void ParTree::compute_new_edges(Cluster* snew){
                 assert(found != snew->edgesOut.end());  // Must have the edge
 
                 assert(eold->A21 != nullptr);
-                if (eold->A21->rows() != nold->rows()) cout << eold->n1->get_id() << " " << eold->n2->get_id() <<" " << eold->A21->rows() << " " << nold->rows() << endl;
                 assert(eold->A21->rows() == nold->rows());
                 assert(eold->A21->cols() == sold->cols());
+
+                assert(nold->rposparent >= 0);
+                assert(sold->cposparent >= 0);
 
                 (*found)->A21->block(nold->rposparent, sold->cposparent, nold->rows(), sold->cols()) = *(eold->A21);
                 // delete eold; // just free memory
@@ -451,7 +430,7 @@ int ParTree::factorize(){
         int blas_threads;
         int ttor_threads;
 
-        // Find fill-in and allocate memory 
+        // Find fill-in and allocate memory -- TODO: Make this sequential (seems easier and more efficient as this is very cheap)
         // All ranks do this for now --- CHANGE: TODO
         {
             blas_threads=1;
@@ -473,8 +452,8 @@ int ParTree::factorize(){
             }
 
             // Threadpool
-            Communicator comm(MPI_COMM_WORLD,0);
-            Threadpool_dist tp(ttor_threads, &comm, verb, "fillin_"+ to_string(ilvl)+"_");
+            Communicator comm(MPI_COMM_WORLD);
+            Threadpool_dist tp(ttor_threads, &comm, verb, "fillin_"+ to_string(ilvl)+"_" +to_string(my_rank)+"_");
             Taskflow<Cluster*> get_sparsity_tf(&tp, verb);
             Taskflow<pCluster2> fillin_tf(&tp, verb);
 
@@ -483,7 +462,38 @@ int ParTree::factorize(){
                 tp.set_logger(&log);
             }
 
-            // For geometric partitioning this will happen locally on each cluster -- no need for comm 
+            auto send_edge_am = comm.make_active_msg([&] (int& n1_order,  view<int>& n2_orders){
+                Cluster* n1 = get_cluster(n1_order);
+                for (auto ord : n2_orders){
+                    Cluster* n2 = get_cluster(ord);
+                    assert(cluster2rank(n2) == my_rank);
+                    bool is_spars_nbr = (n1->lvl()>this->current_bottom) && (n2->lvl()>this->current_bottom) && (n1 != n2);
+                    n2->add_edgeIn(new Edge(n1, n2), is_spars_nbr); // e->A21 = new MatrixXd(0,0) -- thread safe
+                }
+            });
+
+            auto send_fulfill_am = comm.make_active_msg([&] (int& c_order, view<int>& c_edges, view<int>& fulfill_deps){
+                Cluster* c = get_cluster(c_order);
+                // Create c->edgesOut 
+                assert(cluster2rank(c)!= my_rank);
+                for (auto n_order: c_edges){
+                    Cluster* n = get_cluster(n_order);
+                    Edge* e = new Edge(c,n);
+                    c->edgesOut.push_back(e); // No race condition possible here
+                    c->create_T(n_order);
+                    if (n_order == c_order) c->add_self_edge(e);
+                }
+                c->sort_edgesOut(); // important
+
+                // Fulfill deps 
+                for (auto n_order: fulfill_deps){
+                    Cluster* n = get_cluster(n_order);
+                    assert(cluster2rank(n)== my_rank);
+                    fillin_tf.fulfill_promise({c,n});
+                }
+               
+            });
+
             get_sparsity_tf.set_mapping([&] (Cluster* c){
                     return c->get_order()%ttor_threads; 
                 })
@@ -494,9 +504,26 @@ int ParTree::factorize(){
                     this->get_sparsity(c);
                 })
                 .set_fulfill([&] (Cluster* c){
+                    int c_order = c->get_order();
+                    map<int,vector<int>> to_send;
                     for (auto n: c->rsparsity){
-                        fillin_tf.fulfill_promise({c,n});
+                        int dest = cluster2rank(n);
+                        if (dest == my_rank) fillin_tf.fulfill_promise({c,n});
+                        else to_send[dest].push_back(n->get_order());
                     }
+
+                    if (to_send.size()>0){
+                        vector<int> out_edges;
+                        for (auto e:c->edgesOut){
+                            out_edges.push_back(e->n2->get_order());
+                        }
+                        auto c_edges = view<int>(out_edges.data(), out_edges.size());
+                        for(auto& r: to_send){
+                            auto fulfill_deps = view<int>(r.second.data(), r.second.size());
+                            send_fulfill_am->send(r.first, c_order, c_edges, fulfill_deps);
+                        }
+                    }
+                    
                 })
                 .set_name([](Cluster* c) {
                     return "get_sparsity_" + to_string(c->get_order());
@@ -515,7 +542,13 @@ int ParTree::factorize(){
                     return 1;  // get_sparsity on c
                 })
                 .set_task([&] (pCluster2 cn) {
-                    alloc_fillin(cn[0], cn[1]);
+                    map<int,vector<int>> to_send;
+                    alloc_fillin(cn[0], cn[1], to_send);
+                    int n1_order = cn[1]->get_order();
+                    for(auto& r: to_send){
+                        auto edges_view = view<int>(r.second.data(), r.second.size());
+                        send_edge_am->send(r.first, n1_order, edges_view);
+                    }
                 })
                 .set_name([](pCluster2 cn) {
                     return "fillin_" + to_string(cn[0]->get_order()) + "_" + to_string(cn[1]->get_order());
@@ -528,7 +561,7 @@ int ParTree::factorize(){
             vstart = systime();
             {
                 for (auto self: this->interiors_current()){
-                    get_sparsity_tf.fulfill_promise(self);
+                    if (cluster2rank(self)==my_rank) get_sparsity_tf.fulfill_promise(self);
                 }
             }
             tp.join();
@@ -570,7 +603,7 @@ int ParTree::factorize(){
 
             // Threadpool
             Communicator comm(MPI_COMM_WORLD);
-            Threadpool_dist tp(ttor_threads, &comm, verb, "elmn_" + to_string(ilvl)+"_");
+            Threadpool_dist tp(ttor_threads, &comm, verb, "elmn_" + to_string(ilvl)+"_"+to_string(my_rank)+"_");
             /* Elimination */ 
             Taskflow<Cluster*> geqrt_tf(&tp, verb);
             Taskflow<EdgeIt> larfb_tf(&tp, verb);
@@ -605,16 +638,19 @@ int ParTree::factorize(){
             }
             auto geqrt_2_larfb_am = comm.make_active_msg(
                 [&] (view<double>& U_data, view<double>& T_data, view<int>& larfb_deps, int& c_order, int& crows, int& ccols){
-                    Cluster* c = get_cluster_local(c_order);
-                    *c->self_edge()->A21 = make_matrix(U_data, crows, ccols);
-                    for (auto e:c->edgesOut){
-                        c->create_T(e->n2->get_order());
-                    }
-                    MatrixXd Tmat = make_matrix(T_data, ccols);
-                    c->set_T(c->get_order(), make_matrix());
+                    Cluster* c = get_interior(c_order);
+                    c->set_eliminated();
+                    Edge* c_self = c->self_edge();
+                    assert(c_self->A21 != nullptr);
+                    // if (c_self->A21 == nullptr) c_self->A21 = new MatrixXd(crows, ccols);
+                    // c->create_T(c->get_order());
+                    MatrixXd Tmat = Map<MatrixXd>(T_data.data(), ccols, ccols);
+                    *(c_self->A21) = Map<MatrixXd>(U_data.data(), crows, ccols);
+                    c->set_T(c->get_order(), Tmat);
                     for (int norder: larfb_deps){
-                        auto eit = find_out_edge(c, norder);
-                        assert(eit->n1->comm_rank()==my_rank);
+                        Cluster* n = get_interface(norder);
+                        auto eit = n->find_out_edge(c_order);
+                        assert(cluster2rank((*eit)->n1) == my_rank);
                         larfb_tf.fulfill_promise(eit);
                     }
                 });
@@ -635,20 +671,20 @@ int ParTree::factorize(){
                         int dest = edge2rank(*it);
                         if(dest == my_rank) larfb_tf.fulfill_promise(it);
                         else {
-                            send_to[dest].push_back((*it)->n2->get_order());
+                            send_to[dest].push_back((*it)->n1->get_order());
                         }
                     }
 
                     if (send_to.size() > 0){
-                        auto U_view = view(c->self_edge()->A21);
-                        auto T_view = view(c->get_T(c->get_order()));
                         int crows = c->rows();
                         int ccols = c->cols();
                         int corder = c->get_order();
 
-                    
+                        auto U_view = view<double>(c->self_edge()->A21->data(), crows*ccols);
+                        auto T_view = view<double>(c->get_T(c->get_order())->data(), ccols*ccols);
+                        
                         for (auto& r: send_to ){
-                            auto larfb_deps = view(&r.second);
+                            auto larfb_deps = view<int>(r.second.data(), r.second.size());
                             geqrt_2_larfb_am->send(r.first, U_view, T_view, larfb_deps, corder, crows, ccols);
                         }
                     }
@@ -683,7 +719,7 @@ int ParTree::factorize(){
                     Edge* e = *eit;
                     Cluster* c = e->n2;
                     Cluster* m = e->n1;
-                    // First ssrfb
+                    // First ssrfb -- happens on the same rank
                     auto c_edge_it = c->edgesOut.begin();
                     assert((*c_edge_it)->n2 == c); // first edgeout is c itself when c is at leaf level
                     c_edge_it++;
@@ -691,7 +727,7 @@ int ParTree::factorize(){
                     if (c_edge_it != c->edgesOut.end()){
                         Edge* eout = *c_edge_it;
                         Cluster*  n = eout->n2;
-                        auto found = find_out_edge(m,n);
+                        auto found = m->find_out_edge(n->get_order());
                         ssrfb_tf.fulfill_promise({c_edge_it, eit, found}); // cn, cm, mn
                     }
                 })
@@ -720,34 +756,24 @@ int ParTree::factorize(){
                     auto c_edge_it = it[0]; // cn
                     Cluster* c = (*c_edge_it)->n1;
 
-                    // First fulfill scale 
+                    // First fulfill scale -- same rank
                     Edge* edge_mn = *it[2];
                     if (this->ilvl >= skip && this->ilvl < nlevels-2  && this->tol != 0){
                         if (edge_mn->n2 == edge_mn->n1) scale_geqrt_tf.fulfill_promise(edge_mn->n1); // Scale GEQRF
                         else scale_larfb_trsm_tf.fulfill_promise(edge_mn);
                     }
 
-                    // Next ssrfb
+                    // Next ssrfb -- also on same rank
                     c_edge_it++;
                     Cluster* m = (*it[1])->n1;
                     if (c_edge_it != c->edgesOut.end()){
-                        int dest = cluster2rank(m);
-                        if(dest == my_rank) {
-                            Edge* eout = *c_edge_it;
-                            Cluster*  n = eout->n2;
-                            auto found = find_out_edge(m,n);
-                            ssrfb_tf.fulfill_promise({c_edge_it, it[1], found}); // cn, cm, mn
-                        }
-                        else {
-                            to_send[dest].push_back(m->get_order());
-                        }
+                        Edge* eout = *c_edge_it;
+                        Cluster*  n = eout->n2;
+                        auto found = m->find_out_edge(n->get_order());
+                        int dest = edge2rank(*found);
+                        assert(dest == my_rank); 
+                        ssrfb_tf.fulfill_promise({c_edge_it, it[1], found}); // cn, cm, mn
                     }
-
-                    if (send_to.size() > 0){
-                        auto U_view = view((*c_edge_it)->A21);
-                        auto T_view = view(c->get_T(n->get_order()));
-                    }
-
                 })
                 .set_name([](EdgeIt3 it) {
                     Edge* e_cn = *it[0];
@@ -761,18 +787,30 @@ int ParTree::factorize(){
                 });
 
             auto tsqrt_2_ssrfb_am = comm.make_active_msg(
-                [&] (view<double>& U_data, view<double>& T_data, view<int>& ssrfb_deps, int& cn_order, int& cn_rows, int& c_cols){
-                    Cluster* c = get_cluster_local(c_order);
-                    *c->self_edge()->A21 = make_matrix(U_data, crows, ccols);
-                    for (auto e:c->edgesOut){
-                        c->create_T(e->n2->get_order());
-                    }
-                    MatrixXd Tmat = make_matrix(T_data, ccols);
-                    c->set_T(c->get_order(), make_matrix());
-                    for (int norder: larfb_deps){
-                        auto eit = find_out_edge(c, norder);
-                        assert(eit->n1->comm_rank()==my_rank);
-                        larfb_tf.fulfill_promise(eit);
+                [&] (view<double>& U_data, view<double>& T_data, view<int>& ssrfb_deps, int& c_order, int& n_order, int& n_rows, int& c_cols){
+                    Cluster* c = get_interior(c_order);
+                    // Cluster* n = get_interface(n_order); 
+
+                    // Store the U and T matrices
+                    auto eit_cn = find_if(c->edgesOut.begin(), c->edgesOut.end(), [&n_order](Edge* e){return e->n2->get_order() == n_order;});
+                    assert(eit_cn != c->edgesOut.end());
+                    Edge* e_cn = *eit_cn;
+                    assert(e_cn->A21 != nullptr);
+                    // if (e_cn->A21 == nullptr) e_cn->A21 = new MatrixXd(n_rows, c_cols);
+                    *(e_cn->A21) = Map<MatrixXd>(U_data.data(), n_rows, c_cols);
+
+                    int nb = min(32, c_cols);
+                     // c->create_T(n_order);
+                    MatrixXd Tmat = Map<MatrixXd>(T_data.data(), nb, c_cols);
+                    c->set_T(n_order, Tmat);
+
+                    // Satisfy dependencies 
+                    for (int m_order: ssrfb_deps){
+                        Cluster* m = get_interface(m_order);
+                        auto eit_mn = m->find_out_edge(n_order);
+                        auto eit_mc = m->find_out_edge(c_order);
+                        assert(cluster2rank(m)==my_rank);
+                        ssrfb_tf.fulfill_promise({eit_cn, eit_mc, eit_mn}); // c->n, m->c, m->n
                     }
                 });
 
@@ -791,7 +829,7 @@ int ParTree::factorize(){
                     eit_next++;
                     Cluster* c = (*eit)->n1;
                     Cluster* n = (*eit)->n2;
-                    // Next tsqrt
+                    // Next tsqrt -- same rank
                     if (eit_next != c->edgesOut.end()){
                         tsqrt_tf.fulfill_promise(eit_next);
                     }
@@ -799,8 +837,28 @@ int ParTree::factorize(){
                     map<int,vector<int>> send_to;
                     for (EdgeIt it=c->edgesIn.begin(); it!=c->edgesIn.end(); ++it){ // All the edges that need to be updated
                         Cluster* m = (*it)->n1;
-                        auto found = find_out_edge(m,n);
-                        ssrfb_tf.fulfill_promise({eit, it, found}); // cn, cm, mn
+                        int dest = cluster2rank(m);
+                        if (dest == my_rank){
+                            auto found = m->find_out_edge(n->get_order());
+                            ssrfb_tf.fulfill_promise({eit, it, found}); // c->n, m->c, m->n
+                        }
+                        else {
+                            send_to[dest].push_back(m->get_order());
+                        }
+                    }
+
+                    if (send_to.size()>0){
+                        auto c_order = c->get_order();
+                        auto n_order = n->get_order();
+                        int nrows = n->rows();
+                        auto ccols = c->cols();
+                        int nb = min(32, ccols);
+                        auto U_view = view<double>((*eit)->A21->data(), nrows*ccols);
+                        auto T_view = view<double>(c->get_T(n->get_order())->data(), nb*ccols);
+                        for (auto& r: send_to){
+                            auto ssrfb_deps = view<int>(r.second.data(), r.second.size());
+                            tsqrt_2_ssrfb_am->send(r.first, U_view, T_view, ssrfb_deps, c_order, n_order, nrows, ccols);
+                        }
                     }
                 })
                 .set_name([](EdgeIt eit) {
@@ -928,7 +986,9 @@ int ParTree::factorize(){
             estart = systime();
             {
                 for (auto self: this->interiors_current()){ 
-                    if (cluster2rank(self)== my_rank) geqrt_tf.fulfill_promise(self);
+                    if (cluster2rank(self) == my_rank) {
+                        geqrt_tf.fulfill_promise(self);
+                    }
                 }
 
                 for (auto self: this->interfaces_current()){ 
@@ -958,30 +1018,103 @@ int ParTree::factorize(){
         mstart = systime();
         if (this->ilvl < nlevels-1)
         {
-            this->current_bottom++;
-            // Update sizes -- sequential because we need a synch point after this and this is cheap
-            for (auto snew: this->bottom_current()){
-                int rsize = 0;
-                int csize = 0;
-                for (auto sold: snew->children){
-                    sold->rposparent = rsize;
-                    sold->cposparent = csize;
-                    rsize += sold->rows();
-                    csize += sold->cols();
-                    for (auto d2c: sold->dist2connxs) if(!d2c->is_eliminated()) snew->dist2connxs.insert(d2c->get_parent());
+            {
+                // Send all interfaces 
+
+                Communicator comm(MPI_COMM_WORLD);
+                Threadpool_dist tp(ttor_threads, &comm, verb, "merge_send_" + to_string(ilvl)+"_"+to_string(my_rank)+"_");
+
+                auto send_size_am = comm.make_active_msg([&] (view<int3>& sizes_view){
+                    for (auto orc : sizes_view){
+                        int order = orc[0];
+                        Cluster* c = get_interface(order);
+                        c->reset_size(orc[1], orc[2]);
+                    }
+                });
+
+                auto send_edge_am = comm.make_active_msg([&] (int& n1_order, int& n2_order, int& A_rows, int& A_cols, view<double>& A){
+                    Cluster* n1 = get_interface(n1_order);
+                    Cluster* n2 = get_interface(n2_order);
+                    MatrixXd* A21 = new MatrixXd(A_rows, A_cols);
+                    *A21 = Map<MatrixXd>(A.data(), A_rows, A_cols);
+                    auto found = find_if(n1->edgesOut.begin(), n1->edgesOut.end(), [& n2_order](Edge* e){return e->n2->get_order() == n2_order;});
+                    if (found == n1->edgesOut.end()){
+                        n1->add_edgeOut_threadsafe(new Edge(n1, n2, A21)); // thread-safe
+                    };
+                });
+
+                vector<int3> to_send;
+                for (auto sold: this->interfaces_current()){
+                    if (cluster2rank(sold) == my_rank){ // Contains the most up-to-date info
+                        // Send to all ranks
+                        to_send.push_back({sold->get_order(),sold->rows(),sold->cols()});
+                    }
                 }
-                snew->set_size(rsize, csize); 
-                snew->set_org(rsize, csize);
+
+                auto sizes_view = view<int3>(to_send.data(), to_send.size());
+                for (int dest=0; dest < nranks(); ++dest){
+                    if(dest!=my_rank) {
+                        send_size_am->send(dest, sizes_view);
+                    }
+                }
+
+                for (auto sold: this->interfaces_current()){
+                    if (cluster2rank(sold) == my_rank){
+                        int dest = cluster2rank(sold->get_parent());
+                        if (dest != my_rank){
+                            for (auto e: sold->edgesOut){
+                                if (!(e->n2->is_eliminated())){
+                                    int A_rows = e->A21->rows();
+                                    int A_cols = e->A21->cols();
+                                    auto A_view = view<double>(e->A21->data(), A_rows*A_cols);
+                                    int n1_order = e->n1->get_order();
+                                    int n2_order = e->n2->get_order();
+                                    send_edge_am->send(dest, n1_order, n2_order, A_rows, A_cols, A_view);
+                                }
+                            }
+                        }
+                    }
+                }
+                tp.join();
+            }
+
+            // Actual merge
+            this->current_bottom++;
+            // Update sizes -- sequential because we need a synch point after this and this is cheap anyway
+            for (auto snew: this->bottom_current()){
+                // if (cluster2rank(snew) == my_rank){ // Need to be done in all ranks
+                    int rsize = 0;
+                    int csize = 0;
+                    for (auto sold: snew->children){
+                        sold->rposparent = rsize;
+                        sold->cposparent = csize;
+                        rsize += sold->rows();
+                        csize += sold->cols();
+                        for (auto d2c: sold->dist2connxs) if(d2c->lvl() >= this->current_bottom) snew->dist2connxs.insert(d2c->get_parent());
+                    }
+                    snew->set_size(rsize, csize); 
+                    snew->set_org(rsize, csize);
             }
 
             // Update edges
-            Threadpool_shared tp(n_threads, verb, "merge_"+ to_string(ilvl)+"_");
+            Communicator comm(MPI_COMM_WORLD);
+            Threadpool_dist tp(ttor_threads, &comm, verb, "merge_" + to_string(ilvl)+"_"+to_string(my_rank)+"_");
             Taskflow<Cluster*> update_edges_tf(&tp, verb);
             
             Logger log(1000); 
             if (this->ttor_log){
                 tp.set_logger(&log);
             }
+
+            auto send_edge_am = comm.make_active_msg([&] (int& n1_order,  view<int>& n2_orders){
+                Cluster* n1 = get_cluster(n1_order);
+                for (auto ord : n2_orders){
+                    Cluster* n2 = get_cluster(ord);
+                    assert(cluster2rank(n2) == my_rank);
+                    bool is_spars_nbr = (n1->lvl()>this->current_bottom) && (n2->lvl()>this->current_bottom) && (n1 != n2);
+                    n2->add_edgeIn(new Edge(n1, n2), is_spars_nbr); // e->A21 = new MatrixXd(0,0) -- thread safe
+                }
+            });
 
             /* Compute new edges */
             update_edges_tf.set_mapping([&] (Cluster* c){
@@ -991,7 +1124,13 @@ int ParTree::factorize(){
                     return 1;
                 })
                 .set_task([&] (Cluster* c) {
-                    compute_new_edges(c);
+                    map<int,vector<int>> to_send;
+                    compute_new_edges(c, to_send);
+                    int c_order = c->get_order();
+                    for (auto& r: to_send){
+                        auto edges_view = view<int>(r.second.data(), r.second.size());
+                        send_edge_am->send(r.first, c_order, edges_view);
+                    }
                 })
                 .set_name([](Cluster* c) {
                     return "update_edges_" + to_string(c->get_order());
@@ -1001,7 +1140,7 @@ int ParTree::factorize(){
                 });
 
             for (auto snew: this->bottom_current()){
-                update_edges_tf.fulfill_promise(snew);
+                if (cluster2rank(snew) == my_rank) update_edges_tf.fulfill_promise(snew);
             }
             tp.join();
 
@@ -1024,9 +1163,6 @@ int ParTree::factorize(){
         cout << fixed << setprecision(3)  
              <<  elapsed(vstart,vend) << "   "
              <<  elapsed(estart,eend) << "   "
-        //      << "shift: " <<  elapsed(shstart,shend) << "  "
-             // << "scale: " << elapsed(scstart,scend) << "  "
-             // << "sprsfy: " << elapsed(spstart,spend) << "  "
              <<  elapsed(mstart,mend) << "  " 
              <<  elapsed(lvl0,lvl1) << "  ("
              <<  get<0>(topsize()) << ", " << get<1>(topsize()) << ")   (" 

@@ -23,9 +23,13 @@ using namespace std;
 typedef SparseMatrix<double, 0, int> SpMat; 
 
 int main(int argc, char* argv[]){
+
+    int req = MPI_THREAD_FUNNELED;
+    int prov = -1;
+    MPI_Init_thread(NULL, NULL, req, &prov);
   
-     cxxopts::Options options("spaQR", "Sparsified QR for general sparse matrices");
-     options.add_options()
+    cxxopts::Options options("spaQR", "Sparsified QR for general sparse matrices");
+    options.add_options()
         ("help", "Print help")
         ("m,matrix", "Matrix file in martrix market format", cxxopts::value<string>())
         ("l,lvl","Number of levels", cxxopts::value<int>())
@@ -273,7 +277,7 @@ int main(int argc, char* argv[]){
     // Factorize
     int err = t.factorize();
 
-    
+    /*
     if (!err)
     // // Run one solve
     {
@@ -301,6 +305,7 @@ int main(int argc, char* argv[]){
             }
         }
     }
+    */
 
     // bool verb = true; 
     // int iter = 0;
@@ -338,6 +343,6 @@ int main(int argc, char* argv[]){
     //     }
     // }
     
-
-  return 0;  
+    MPI_Finalize();
+    return 0;  
 }

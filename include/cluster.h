@@ -174,6 +174,7 @@ private:
     /* Mutex for edgeIn and edgeInFillin */
     std::mutex mutex_edgeIn;
     std::mutex mutex_edgeInFillin;
+    std::mutex mutex_edgeOut;
 
 
 
@@ -251,6 +252,7 @@ public:
     SepID get_sepID();
 
     int part();
+    int section();
 
     /*Heirarchy*/
     Cluster* get_parent();
@@ -262,8 +264,8 @@ public:
     /* Edges */
     Edge* self_edge();
     void add_self_edge(Edge*);
-
     void add_edgeOut(Edge* e);
+    void add_edgeOut_threadsafe(Edge* e);
     void add_edgeIn(Edge* e);
     void add_edgeOutFillin(Edge* e);
 
@@ -273,6 +275,7 @@ public:
     void combine_edgesOut();
     void combine_edgesIn();
     void sort_edgesOut(bool reverse = false);
+    EdgeIt find_out_edge(int);
 
     /*Elimination*/
     void create_T(int);

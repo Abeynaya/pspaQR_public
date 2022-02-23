@@ -11,7 +11,7 @@ std::ostream& operator<<(std::ostream& os, const SepID& s) {
 
 /* Print ClusterID */
 std::ostream& operator<<(std::ostream& os, const ClusterID& c) {
-    os << "(" << c.self << "," << c.part << ":" << c.l << ";" << c.r << ")";
+    os << "(" << c.self << "," << c.section << ":" << c.l << ";" << c.r << ")";
     return os;
 }
 
@@ -47,7 +47,7 @@ void Cluster::set_org(int r, int c) {rsize_org = r; csize_org = c;}
 ClusterID Cluster::get_id() const {return id;}
 SepID Cluster::get_sepID(){return id.self;};
 int Cluster::part(){return id.part;};
-
+int Cluster::section(){return id.section;};
 
 /*Heirarchy*/
 Cluster* Cluster::get_parent(){return parent;}
@@ -68,6 +68,11 @@ void Cluster::add_edgeOut(Edge* e){edgesOut.push_back(e);}
 void Cluster::add_edgeIn(Edge* e){edgesIn.push_back(e);}
 
 void Cluster::add_edgeOutFillin(Edge* e){edgesOutFillin.push_back(e);}
+
+void Cluster::add_edgeOut_threadsafe(Edge* e){
+    std::lock_guard<std::mutex> lock(mutex_edgeOut);
+    edgesOut.push_back(e);
+}
 
 void Cluster::add_edgeIn(Edge* e, bool is_spars_nbr){
     std::lock_guard<std::mutex> lock(mutex_edgeIn);
@@ -116,11 +121,13 @@ void Cluster::sort_edgesOut(bool reverse){
     }
 }
 
+EdgeIt Cluster::find_out_edge(int n_order) {
+    auto found = find_if(edgesOut.begin(), edgesOut.end(), [&n_order](Edge* e){return e->n2->get_order() == n_order;});
+    assert(found != edgesOut.end());
+    return found;
+}
+
 /*Elimination*/
-// void Cluster::set_Q(Eigen::MatrixXd& Q_) {
-//     this->Q = new Eigen::MatrixXd(0,0);
-//     *(this->Q) = Q_;
-// }
 void Cluster::set_T(Eigen::MatrixXd& T_) {
     this->T = new Eigen::MatrixXd(0,0);
     *(this->T) = T_;
@@ -131,11 +138,6 @@ void Cluster::create_T(int norder) {
 void Cluster::set_T(int norder, Eigen::MatrixXd& T_) {
     *(this->Tmap.at(norder)) = T_;
 }
-
-// void Cluster::set_tau(Eigen::VectorXd& t_) {
-//     this->tau = new Eigen::VectorXd(0);
-//     *(this->tau) = t_;
-// }
 
 void Cluster::set_tau(int r, int c){
     int k = std::min(r,c);
@@ -188,6 +190,11 @@ Eigen::MatrixXd* Cluster::get_Q_sp(){return this->Q_sp;}
 Eigen::MatrixXd* Cluster::get_T_sp(){return this->T_sp;}
 Eigen::VectorXd* Cluster::get_tau_sp(){return this->tau_sp;}
 
+
+/**
+ *  Solving the linear system 
+**/
+
 void Cluster::set_size(int r, int c){
     rsize = r;
     csize = c;
@@ -211,7 +218,6 @@ void Cluster::resize_x(int r){
     this->xt->conservativeResize(old_r+r);
 }
 
-/* Solution to Linear System */
 Segment Cluster::head(){
     assert(this->x != nullptr);
     return this->x->segment(0, this->csize);

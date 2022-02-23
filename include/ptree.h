@@ -28,6 +28,7 @@
 #include "tree.h"
 #include "tasktorrent.hpp"
 
+typedef std::array<int,3> int3;
 typedef std::array<Edge*,2> pEdge2;
 typedef std::array<Cluster*,2> pCluster2;
 typedef std::array<EdgeIt,3> EdgeIt3;
@@ -62,12 +63,13 @@ private:
 
 	/* Helper */
 	bool want_sparsify(Cluster*) const;
-
-	/* Setup */
-	void assemble(SpMat& A);
+	Cluster* get_interior(int) const; // given order return the cluster
+	Cluster* get_interface(int) const; // given order return the cluster
+	Cluster* get_cluster(int) const; // given order return the cluster (interface or interior)
+	
 
 	// Methods needed for elimination
-	void alloc_fillin(Cluster*, Cluster*);
+	void alloc_fillin(Cluster*, Cluster*, map<int,vector<int>>&);
 	void geqrt_cluster(Cluster*);
 	void larfb_edge(Edge*);
 	void ssrfb_edges(Edge*,Edge*,Edge*);
@@ -83,7 +85,7 @@ private:
 	void sparsify_rrqr_only(Cluster*);
 
 	// Merge
-	void compute_new_edges(Cluster*);
+	void compute_new_edges(Cluster*, map<int, vector<int>>&);
 
 	// Methods for solve
 	void QR_fwd(Cluster*) const;
@@ -102,6 +104,10 @@ public:
 	void set_nthreads(int);
 	void set_verbose(int);
 	void set_ttor_log(int);
+	int nranks() const;
+	int get_rank(int, int);
+	int cluster2rank(Cluster*);
+	int edge2rank(Edge*);
 
 
 	ParTree(int nlevels_, int skip_) : Tree(nlevels_, skip_), my_rank(ttor::comm_rank()),
@@ -111,6 +117,7 @@ public:
 	Edge* new_edgeOut(Cluster*, Cluster*);
 	Edge* new_edgeOutFillin(Cluster*, Cluster*);
 
+	// void assemble(SpMat& A);
 	int factorize();
 	void solve(Eigen::VectorXd b, Eigen::VectorXd& x) const;
 	~ParTree() {};

@@ -325,6 +325,7 @@ vector<ClusterID> GeometricPartitionAtA(SpMat& A, int nlevels, MatrixXd* Xcoo, i
                     }
                     if(sep){
                         cmap[i].self=SepID(l,pi/2);
+                        cmap[i].section = parts[i];
                     }
                 }
             }
@@ -337,6 +338,7 @@ vector<ClusterID> GeometricPartitionAtA(SpMat& A, int nlevels, MatrixXd* Xcoo, i
             cmap[i].self = SepID(0,parts[i]);
             cmap[i].l = SepID(0,parts[i]);
             cmap[i].r = SepID(0,parts[i]);
+            cmap[i].section = parts[i];
         }
     }
 
@@ -399,6 +401,7 @@ vector<ClusterID> MetisPartition(SpMat& A, int nlevels){
                     }
                     if(sep){
                         cmap[i].self=SepID(l,pi/2);
+                        cmap[i].section = parts[i];
                     }
                 }
             }
@@ -411,6 +414,7 @@ vector<ClusterID> MetisPartition(SpMat& A, int nlevels){
             cmap[i].self = SepID(0,parts[i]);
             cmap[i].l = SepID(0,parts[i]);
             cmap[i].r = SepID(0,parts[i]);
+            cmap[i].section = parts[i];
         }
     }
 
@@ -418,7 +422,9 @@ vector<ClusterID> MetisPartition(SpMat& A, int nlevels){
     return cmap;
 }
 #else
-/* HyperGraph Partition*/
+cout << "HYPERGRAPH OPTION DISABLED" << endl;
+/* 
+//HyperGraph Partition 
 void partition_patoh(SpMat& A, int nlevels, vector<int>& parts){
     int nrows = A.rows();
     int ncols = A.cols(); 
@@ -497,6 +503,7 @@ vector<ClusterID> HypergraphPartition(SpMat& A, int nlevels){
     getInterfacesUsingA_HUND(A, nlevels, cmap, parts);
     return cmap;
 }
+*/
 #endif
 
 

@@ -29,6 +29,11 @@ struct Edge{
 			interior_deps=0;	
 		}
 
+		Edge(Cluster* n1_, Cluster* n2_): n1(n1_), n2(n2_){
+			A21 = new Eigen::MatrixXd(0,0);
+			interior_deps=0;	
+		}
+
 		~Edge(){
 			if (A21 != nullptr){
 				delete A21;
