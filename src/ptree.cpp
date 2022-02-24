@@ -269,10 +269,6 @@ void ParTree::scale_cluster(Cluster* c){
     MatrixXd Q = *(e->A21);
     MatrixXd T = MatrixXd::Zero(c->cols(), c->cols());
 
-    // VectorXd t = VectorXd::Zero(c->cols());
-    // geqrf(&Q, &t);
-    // larft(&Q, &t, &T);
-
     int ncols = Q.cols();
     int nrows = Q.rows();
     int info = LAPACKE_dgeqrt(LAPACK_COL_MAJOR, nrows, ncols, ncols, Q.data(), nrows, T.data(), ncols);
@@ -284,7 +280,6 @@ void ParTree::scale_cluster(Cluster* c){
 
     c->set_Qs(Q);
     c->set_Ts(T);
-    // c->set_taus(t);
 }
 
 /* Merge */
@@ -870,6 +865,39 @@ int ParTree::factorize(){
                 });
 
             /* Scaling */
+            auto send_scale_am = comm.make_active_msg(
+                [&] (int& c_order, view<double>& U_data, view<double>& T_data, int& c_rows, int& c_cols, view<int>& larfb_deps){
+                    Cluster* c = get_interface(c_order);
+                    c->reset_size(c_rows, c_cols);
+                    MatrixXd Qs = Map<MatrixXd>(U_data.data(), c_rows, c_cols);
+                    MatrixXd Ts = Map<MatrixXd>(T_data.data(), c_cols, c_cols);
+                    c->set_Qs(Qs);
+                    c->set_Ts(Ts);
+                    for (auto n_order: larfb_deps){
+                        Cluster* n = get_interface(n_order);
+                        assert(cluster2rank(n)==my_rank);
+                        auto found = find_if(n->edgesOutNbrSparsification.begin(), n->edgesOutNbrSparsification.end(), 
+                                            [&c_order](Edge*e){return e->n2->get_order() == c_order;});
+                        assert(found != n->edgesOutNbrSparsification.end());
+                        scale_larfb_trsm_tf.fulfill_promise(*found);
+                    }
+            });
+
+            auto send_scale_fulfill_only_am = comm.make_active_msg(
+                [&] (int& c_order, int& c_rows, int& c_cols, view<int>& larfb_deps){
+                    Cluster* c = get_interface(c_order);
+                    c->reset_size(c_rows, c_cols);
+            
+                    for (auto n_order: larfb_deps){
+                        Cluster* n = get_interface(n_order);
+                        assert(cluster2rank(n)==my_rank);
+                        auto found = find_if(n->edgesOutNbrSparsification.begin(), n->edgesOutNbrSparsification.end(), 
+                                            [&c_order](Edge*e){return e->n2->get_order() == c_order;});
+                        assert(found != n->edgesOutNbrSparsification.end());
+                        scale_larfb_trsm_tf.fulfill_promise(*found);
+                    }
+            });
+
             scale_geqrt_tf.set_mapping([&] (Cluster* c){
                     return c->get_order()%ttor_threads; 
                 })
@@ -884,14 +912,39 @@ int ParTree::factorize(){
                 .set_fulfill([&] (Cluster* c){
                     // Fulfill these even for clusters that are not sparsified -- important
                     // Apply ormqr to rows and cols
+                    map<int, vector<int>> to_send;
                     for (auto ein: c->edgesInNbrSparsification){
-                        scale_larfb_trsm_tf.fulfill_promise(ein);
+                        int dest = edge2rank(ein);
+                        if (dest == my_rank) scale_larfb_trsm_tf.fulfill_promise(ein);
+                        else to_send[dest].push_back(ein->n1->get_order());
                     }
-                    for (auto eout: c->edgesOutNbrSparsification){
+                    for (auto eout: c->edgesOutNbrSparsification){ // same node
+                        assert(edge2rank(eout)==my_rank);
                         scale_larfb_trsm_tf.fulfill_promise(eout);
                     }
-                    // Sparsify cluster
+                    // Sparsify cluster -- same rank
                     sparsify_rrqr_tf.fulfill_promise(c);
+
+                    // Fulfill deps in other ranks
+                    int c_order = c->get_order();
+                    int c_rows = c->rows();
+                    int c_cols = c->cols();
+                    if (want_sparsify(c)){
+                        auto Q_view = view<double>(c->get_Qs()->data(), c->rows()*c->cols()); // c size won't change till all scaling_larfb are done
+                        auto T_view = view<double>(c->get_Ts()->data(), c->cols()*c->cols());
+                        for (auto& r:to_send){
+                            auto edges_view = view<int>(r.second.data(), r.second.size());
+                            send_scale_am->send(r.first, c_order, Q_view, T_view, c_rows, c_cols, edges_view);
+                        }
+                    }
+                    else {
+                        for (auto& r:to_send){
+                            auto edges_view = view<int>(r.second.data(), r.second.size());
+                            send_scale_fulfill_only_am->send(r.first, c_order, c_rows, c_cols, edges_view);
+                        }
+                    }
+                        
+                    
                 })
                 .set_name([](Cluster* c) {
                     return "scale_geqrf_" + to_string(c->get_order());
@@ -902,6 +955,19 @@ int ParTree::factorize(){
 
             /* Apply Q_c^T A_cn and R_n\A_cn 
              * Q_c, R_n from scaling */
+            auto scale_larfb_2_sparsify_am = comm.make_active_msg(
+                [&] (int& n1_order, int& n2_order, view<double>& A_view, int& A_rows, int& A_cols){
+                    Cluster* n1 = get_interface(n1_order);
+                    Cluster* n2 = get_interface(n2_order);
+                    assert(my_rank == cluster2rank(n2));
+                    MatrixXd A = Map<MatrixXd>(A_view.data(), A_rows, A_cols);
+                    auto found = find_if(n2->edgesInNbrSparsification.begin(), n2->edgesInNbrSparsification.end(), 
+                                        [&n1_order](Edge* e){return e->n1->get_order() == n1_order;});
+                    assert(found != n2->edgesInNbrSparsification.end());
+                    *((*found)->A21) = A; 
+                    sparsify_rrqr_tf.fulfill_promise(n2);
+            });
+
             scale_larfb_trsm_tf.set_mapping([&] (Edge* e){
                     return (e->n1->get_order() + e->n2->get_order())%ttor_threads;  
                 })
@@ -916,9 +982,19 @@ int ParTree::factorize(){
                     if (want_sparsify(n)) trsm_edge(e);
                 })
                 .set_fulfill([&] (Edge* e){
-                    // Sparsify cluster
-                    sparsify_rrqr_tf.fulfill_promise(e->n1);
-                    sparsify_rrqr_tf.fulfill_promise(e->n2);
+                    // Sparsify cluster 
+                    sparsify_rrqr_tf.fulfill_promise(e->n1); // same cluster
+                    int dest = cluster2rank(e->n2);
+                    
+                    if (dest == my_rank) sparsify_rrqr_tf.fulfill_promise(e->n2);
+                    else {
+                        int n1_order = e->n1->get_order();
+                        int n2_order = e->n2->get_order();
+                        int A_rows = e->A21->rows();
+                        int A_cols = e->A21->cols();
+                        auto A_view = view<double>(e->A21->data(), A_rows*A_cols);
+                        scale_larfb_2_sparsify_am->send(dest, n1_order, n2_order, A_view, A_rows, A_cols);                        
+                    }
                 })
                 .set_name([](Edge* e) {
                     return "scale_apply_" + to_string(e->n1->get_order())+ "_" + to_string(e->n2->get_order());
@@ -928,6 +1004,39 @@ int ParTree::factorize(){
                 });
 
             /* Sparsification */
+            auto send_sparsify_am = comm.make_active_msg(
+                [&] (int& c_order, view<double>& U_data, view<double>& T_data, int& Q_rows, int& c_rank, view<int>& larfb_deps){
+                    Cluster* c = get_interface(c_order);
+                    c->set_rank(c_rank); // important -- needed in sparsify_larfb
+                    MatrixXd Qsp = Map<MatrixXd>(U_data.data(), Q_rows, c_rank);
+                    MatrixXd Tsp = Map<MatrixXd>(T_data.data(), c_rank, c_rank);
+                    c->set_Q_sp(Qsp);
+                    c->set_T_sp(Tsp);
+                    for (auto n_order: larfb_deps){
+                        Cluster* n = get_interface(n_order);
+                        assert(cluster2rank(n)==my_rank);
+                        auto found = find_if(n->edgesOutNbrSparsification.begin(), n->edgesOutNbrSparsification.end(), 
+                                            [&c_order](Edge*e){return e->n2->get_order() == c_order;});
+                        assert(found != n->edgesOutNbrSparsification.end());
+                        sparsify_larfb_tf.fulfill_promise(*found);
+                    }
+            });
+
+            auto send_sparsify_fulfill_only_am = comm.make_active_msg(
+                [&] (int& c_order, int& c_rank, view<int>& larfb_deps){
+                    Cluster* c = get_interface(c_order);
+                    c->set_rank(c_rank); // important -- needed in sparsify_larfb
+                   
+                    for (auto n_order: larfb_deps){
+                        Cluster* n = get_interface(n_order);
+                        assert(cluster2rank(n)==my_rank);
+                        auto found = find_if(n->edgesOutNbrSparsification.begin(), n->edgesOutNbrSparsification.end(), 
+                                            [&c_order](Edge*e){return e->n2->get_order() == c_order;});
+                        assert(found != n->edgesOutNbrSparsification.end());
+                        sparsify_larfb_tf.fulfill_promise(*found);
+                    }
+            });
+
             sparsify_rrqr_tf.set_mapping([&] (Cluster* c){
                     return c->get_order()%ttor_threads; 
                 })
@@ -942,12 +1051,36 @@ int ParTree::factorize(){
                 })
                 .set_fulfill([&] (Cluster* c){
                     // Apply ormqr to rows and cols
+                    map<int, vector<int>> to_send;
                     for (auto ein: c->edgesInNbrSparsification){
-                        sparsify_larfb_tf.fulfill_promise(ein); // Q_c^T ein->A21
+                        int dest = edge2rank(ein);
+                        if (dest == my_rank) sparsify_larfb_tf.fulfill_promise(ein); // Q_c^T ein->A21
+                        else to_send[dest].push_back(ein->n1->get_order());
                     }
-                    for (auto eout: c->edgesOutNbrSparsification){
+                    for (auto eout: c->edgesOutNbrSparsification){ // same rank
                         sparsify_larfb_tf.fulfill_promise(eout); // eout->A21* Q_c
                     } 
+
+                    // Send to a different rank
+                    int c_order = c->get_order();
+                    int c_rank = c->get_rank();
+                    if (want_sparsify(c)){
+                        int Q_rows = c->original_rows();
+                        auto Qsp_view = view<double>(c->get_Q_sp()->data(), c->original_rows()*c_rank);
+                        auto Tsp_view = view<double>(c->get_T_sp()->data(), c_rank*c_rank);
+
+                        for (auto& r:to_send){
+                            auto edges_view = view<int>(r.second.data(), r.second.size());
+                            send_sparsify_am->send(r.first, c_order, Qsp_view, Tsp_view, Q_rows, c_rank, edges_view);
+                        }
+                    }
+                    else {
+                        for (auto& r:to_send){
+                            auto edges_view = view<int>(r.second.data(), r.second.size());
+                            send_sparsify_fulfill_only_am->send(r.first, c_order, c_rank, edges_view);
+                        }
+                    }
+                        
                 })
                 .set_name([](Cluster* c) {
                     return "sparsify_rrqr_" + to_string(c->get_order());
@@ -993,8 +1126,8 @@ int ParTree::factorize(){
 
                 for (auto self: this->interfaces_current()){ 
                     if (this->ilvl < nlevels-2  && this->ilvl >= skip && this->tol != 0){
-                        if (self->self_edge()->interior_deps == 0){
-                            if (cluster2rank(self)==my_rank) scale_geqrt_tf.fulfill_promise(self);
+                        if (cluster2rank(self)==my_rank && self->self_edge()->interior_deps == 0){
+                            scale_geqrt_tf.fulfill_promise(self);
                         }
                     }
                 }
