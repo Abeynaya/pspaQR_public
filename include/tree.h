@@ -87,6 +87,8 @@ class Tree{
         void sparsify_extra_rows(Eigen::MatrixXd& C, int& rank, double& tol, bool rel = true);
         void sparsifyD_imp(Cluster* c);
 
+        const std::list<Cluster*>& clusters_at_lvl(int l) const {assert(l<nlevels); return bottoms[l];};
+
         const std::list<Cluster*>& bottom_current() const {return bottoms[current_bottom];};
         const std::list<Cluster*>& interiors_current() const {return interiors[current_bottom];};
         const std::list<Cluster*>& interfaces_current() const {return interfaces[current_bottom];};

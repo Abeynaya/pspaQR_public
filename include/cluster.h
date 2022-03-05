@@ -220,7 +220,7 @@ public:
     }
     // Set clusters as eliminated
     void set_eliminated() {
-       assert(! eliminated);
+       // assert(! eliminated);
        eliminated = true;
     }
 
@@ -326,6 +326,7 @@ public:
     void extract_vector(Eigen::VectorXd& soln);
     void textract_vector(Eigen::VectorXd& soln);
     void textract_vector();
+    void reduce_x(Eigen::VectorXd& xc);
 
 
 

@@ -79,6 +79,7 @@ void Cluster::add_edgeIn(Edge* e, bool is_spars_nbr){
     // No need to check if edge is present -- will not be present for sure
     edgesIn.push_back(e);
     if (is_spars_nbr) edgesInNbrSparsification.push_back(e);
+    if (e->n1->lvl() == e->n1->merge_lvl()) col_interior_deps++;
 }
 
 void Cluster::add_edgeInFillin(Edge* e, bool is_spars_nbr){
@@ -150,7 +151,10 @@ void Cluster::set_tau(int r, int c){
 // Eigen::MatrixXd* Cluster::get_Q(){return this->Q;}
 Eigen::VectorXd* Cluster::get_tau(){return this->tau;}
 Eigen::MatrixXd* Cluster::get_T(){return this->T;}
-Eigen::MatrixXd* Cluster::get_T(int norder){return this->Tmap.at(norder);}
+Eigen::MatrixXd* Cluster::get_T(int norder){
+    assert(this->Tmap.at(norder)->rows() != 0);
+    return this->Tmap.at(norder);
+}
 
 
 
@@ -287,6 +291,11 @@ void Cluster::textract_vector(Eigen::VectorXd& soln){
     }
 }
 
+void Cluster::reduce_x(Eigen::VectorXd& xc){
+    std::lock_guard<std::mutex> lock(mutex_edgeIn); // NEEDED to avoid race condition
+    assert(this->head().size() == xc.size());
+    this->head() -= xc;
+}
 
 
 /* Destructor */

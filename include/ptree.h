@@ -66,6 +66,8 @@ private:
 	Cluster* get_interior(int) const; // given order return the cluster
 	Cluster* get_interface(int) const; // given order return the cluster
 	Cluster* get_cluster(int) const; // given order return the cluster (interface or interior)
+	Cluster* get_cluster_at_lvl(int, int) const; // given order return the cluster at a given lvl 
+
 	
 
 	// Methods needed for elimination
@@ -91,6 +93,7 @@ private:
 	void QR_fwd(Cluster*) const;
 	void QR_tsqrt_fwd(Edge* ) const;
 	void QR_bwd(Cluster*) const;
+	void trsv_bwd(Cluster*) const;
 	void scaleD_fwd(Cluster*) const;
 	void scaleD_bwd(Cluster*) const;
 	void orthogonalD_fwd(Cluster*) const;
@@ -105,9 +108,9 @@ public:
 	void set_verbose(int);
 	void set_ttor_log(int);
 	int nranks() const;
-	int get_rank(int, int);
-	int cluster2rank(Cluster*);
-	int edge2rank(Edge*);
+	int get_rank(int, int) const;
+	int cluster2rank(Cluster*) const;
+	int edge2rank(Edge*) const;
 
 
 	ParTree(int nlevels_, int skip_) : Tree(nlevels_, skip_), my_rank(ttor::comm_rank()),
@@ -117,7 +120,7 @@ public:
 	Edge* new_edgeOut(Cluster*, Cluster*);
 	Edge* new_edgeOutFillin(Cluster*, Cluster*);
 
-	// void assemble(SpMat& A);
+	void assemble(SpMat& A);
 	int factorize();
 	void solve(Eigen::VectorXd b, Eigen::VectorXd& x) const;
 	~ParTree() {};

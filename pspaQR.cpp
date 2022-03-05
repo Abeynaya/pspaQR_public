@@ -277,7 +277,7 @@ int main(int argc, char* argv[]){
     // Factorize
     int err = t.factorize();
 
-    /*
+    
     if (!err)
     // // Run one solve
     {
@@ -292,9 +292,11 @@ int main(int argc, char* argv[]){
             if (nrows == ncols){
                 t.solve(bcopy, x);
                 timer tsolv = systime();
-                cout << "<<<<tsolv=" << elapsed(tsolv_0, tsolv) << endl;
-                cout << "One-time solve (Random b):" << endl;             
-                cout << "<<<<|(Ax-b)|/|b| : " << scientific <<  ((A*x-b)).norm() / (b).norm() << endl;
+                if (ttor::comm_rank() == 0){
+                    cout << "<<<<tsolv=" << elapsed(tsolv_0, tsolv) << endl;
+                    cout << "One-time solve (Random b):" << endl;             
+                    cout << "<<<<|(Ax-b)|/|b| : " << scientific <<  ((A*x-b)).norm() / (b).norm() << endl;
+                }
             }
             else {
                 t.solve_nrml(A.transpose()*bcopy, x);
@@ -305,7 +307,7 @@ int main(int argc, char* argv[]){
             }
         }
     }
-    */
+    
 
     // bool verb = true; 
     // int iter = 0;
