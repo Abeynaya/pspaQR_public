@@ -291,11 +291,8 @@ void ParTree::compute_new_edges(Cluster* snew, map<int,vector<int>>& edges_to_se
     }
     // Allocate memory and create new edges
     for (auto n: snew_cnbrs){
-        cout << my_rank << endl;
-        cout << n->get_id() << endl;
         Edge* e = new_edgeOut(snew, n);
         if (snew==n) snew->add_self_edge(e);
-        // else if (snew->lvl() == snew->merge_lvl()) n->col_interior_deps++; // Needed for solve -- need to be sent to rank of n
         // If new edgeIn has to be sent to a different rank
         if (cluster2rank(n)!= my_rank) edges_to_send[cluster2rank(n)].push_back(n->get_order());
     }
@@ -735,7 +732,6 @@ int ParTree::factorize(){
             }
             auto geqrt_2_larfb_am = comm.make_active_msg(
                 [&] (view<double>& U_data, view<double>& T_data, view<int>& larfb_deps, int& c_order, int& crows, int& ccols){
-                    cout << "Message from rank 1: larfb from " << c_order << endl;
                     Cluster* c = get_interior(c_order);
                     c->set_eliminated();
                     Edge* c_self = c->self_edge();
@@ -746,7 +742,6 @@ int ParTree::factorize(){
                     c->set_T(c->get_order(), Tmat);
 
                     for (int norder: larfb_deps){
-                        cout << norder << endl;
                         Cluster* n = get_interface(norder);
                         auto eit = n->find_out_edge(c_order);
                         assert(cluster2rank((*eit)->n1) == my_rank);
@@ -775,7 +770,6 @@ int ParTree::factorize(){
                     }
 
                     if (send_to.size() > 0){
-                        cout << "here " << endl;
                         int crows = c->rows();
                         int ccols = c->cols();
                         int corder = c->get_order();
@@ -1489,22 +1483,12 @@ void ParTree::QR_tsqrt_fwd(Edge* e) const{
                                 xn.data(), &nrows,
                                 work.data(), &info);
     assert(info == 0);
-    cout << e->n1->get_id() << " " <<  e->n2->get_id() << " " << my_rank << endl << xc << endl;
-
 }
 
 void ParTree::trsv_bwd(Cluster* c) const{
-    // int i=0;
     Segment xs = c->get_x()->segment(0, c->cols());
-    // for (auto e: c->edgesIn){
-    //     int s = e->A21->cols();
-    //     xs -= (e->A21->topRows(c->cols()))*(e->n1->get_x()->segment(0, s)); 
-    //     ++i;    
-    // }
     MatrixXd R = c->self_edge()->A21->topRows(xs.size()); // correct when using geqrt
-    // MatrixXd R = c->get_Q()->topRows(xs.size()); // used this in the earlier implementation
     trsv(&R, &xs, CblasUpper, CblasNoTrans, CblasNonUnit); 
-    cout << c->get_id() << endl << xs << endl;
 }
 
 void ParTree::QR_bwd(Cluster* c) const{
@@ -1567,11 +1551,38 @@ void ParTree::solve(VectorXd b, VectorXd& x) const{
     // Permute the rhs according to this->rperm
     b = this->rperm.asPermutation().transpose()*b;
 
-    // Set solution -- keep it sequential 
+    // // Send a copy of permuted b to other ranks
+    // {
+    //     Communicator comm(MPI_COMM_WORLD);
+    //     Threadpool_dist tp(n_threads, &comm, verb, "solve_set_b_"+to_string(my_rank)+"_");
+    //     auto share_b_am = comm.make_active_msg(
+    //         [&] (view<double>& b_view, int& b_size){
+    //             VectorXd b = Map<VectorXd>(b_view.data(), b_size);
+    //             // Set solution -- keep it sequential (cheap)
+    //             for (auto c: bottom_original()){
+    //                 if (cluster2rank(c) == my_rank) c->set_vector(b);
+    //             }
+    //         });
+
+    //     for (int dest=0; dest<nranks();++dest){
+    //         assert(my_rank == 0);
+    //         if (dest != my_rank) {
+    //             auto b_view = view<double>(b.data(), b.size());
+    //             int b_size = b.size();
+    //             share_b_am->send(dest, b_view, b_size);
+    //         }
+    //         else {
+                
+    //         }
+    //     }
+    //     tp.join();
+    // }
+
+    // Set solution -- keep it sequential (cheap)
     for (auto c: bottom_original()){
         if (cluster2rank(c) == my_rank) c->set_vector(b);
     }
-
+   
     // Fwd
     {
         const int ttor_threads = n_threads;
@@ -1863,7 +1874,6 @@ void ParTree::solve(VectorXd b, VectorXd& x) const{
                 return 1;
             })
             .set_task([&] (Cluster* c) {
-                // merge_bwd(c);
                 int k=0;
                 for (auto child: c->children){
                     int dest = cluster2rank(child);
@@ -1882,12 +1892,6 @@ void ParTree::solve(VectorXd b, VectorXd& x) const{
                     k += child->cols();
                 }
             })
-            // .set_fulfill([&] (Cluster* c){
-            //     // Fulfill bwd_spars on the children 
-            //     for (auto child: c->children){
-            //         bwd_spars.fulfill_promise(child);
-            //     }
-            // })
             .set_name([](Cluster* c) {
                 return "bwd_merge_" + to_string(c->get_order());
             })
@@ -1966,35 +1970,6 @@ void ParTree::solve(VectorXd b, VectorXd& x) const{
 
         tp.join();
     }
-
-    // {
-    //     // active message
-    //     Communicator comm(MPI_COMM_WORLD);
-    //     Threadpool_dist tp(n_threads, &comm, verb, "solve_extract_" + to_string(my_rank)+"_");
-
-    //     auto send_to_rank_0 = comm.make_active_msg(
-    //             [&] (int& c_order, view<double>& xc_view){
-    //                 Cluster* c = get_cluster_at_lvl(c_order,0);
-    //                 assert(my_rank == 0);
-    //                 int xc_size = c->original_cols();
-    //                 int xc_start = c->get_cstart();
-    //                 x.segment(xc_start,xc_size) = Map<VectorXd>(xc_view.data(), xc_size);
-    //             });
-
-    //     // Extract solution
-    //     for(auto cluster : bottom_original()) {
-    //         if (cluster2rank(cluster) == my_rank){
-    //             if (my_rank == 0) cluster->extract_vector(x);
-    //             else {
-    //                 int dest = 0;
-    //                 int c_order = cluster->get_order();
-    //                 auto xc_view = view<double>(cluster->get_x()->segment(0,cluster->original_cols()).data(), cluster->original_cols());
-    //                 send_to_rank_0->send(dest, c_order, xc_view);
-    //             }
-    //         }
-    //     }
-    //     tp.join();
-    // }  
 
     // Permute back
     if (my_rank == 0) x = this->cperm.asPermutation() * x; 

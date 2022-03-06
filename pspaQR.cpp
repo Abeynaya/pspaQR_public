@@ -290,8 +290,8 @@ int main(int argc, char* argv[]){
             timer tsolv_0 = systime();
 
             if (nrows == ncols){
-                t.solve(bcopy, x);
-                timer tsolv = systime();
+                    t.solve(bcopy, x);
+                    timer tsolv = systime();
                 if (ttor::comm_rank() == 0){
                     cout << "<<<<tsolv=" << elapsed(tsolv_0, tsolv) << endl;
                     cout << "One-time solve (Random b):" << endl;             
@@ -308,42 +308,45 @@ int main(int argc, char* argv[]){
         }
     }
     
-
-    // bool verb = true; 
-    // int iter = 0;
-    // if (!err)
-    // {
-    //     VectorXd x = VectorXd::Zero(ncols);
-    //     VectorXd b;
-    //     if ((!result.count("rhs"))){
-    //         b = random(nrows,2021);
-    //     }
-    //     else {
-    //         string rhs_file = result["rhs"].as<string>();
-    //         b = mmio::vector_mmread<double>(rhs_file);
-    //     }
-    //     VectorXd bcopy = b;
+    /*
+    bool verb = true; 
+    int iter = 0;
+    if (!err)
+    {
+        VectorXd x = VectorXd::Zero(ncols);
+        VectorXd b;
+        if ((!result.count("rhs"))){
+            b = random(nrows,2021);
+        }
+        else {
+            string rhs_file = result["rhs"].as<string>();
+            b = mmio::vector_mmread<double>(rhs_file);
+        }
+        VectorXd bcopy = b;
 
     
-    //     if(useGMRES) {
-    //         timer gmres0 = systime();
-    //         iter = gmres(A, b, x, t, iterations, iterations, residual, verb);
-    //         timer gmres1 = systime();
-    //         cout << "GMRES: #iterations: " << iter << ", residual |Ax-b|/|b|: " << (A*x-b).norm() / b.norm() << endl;
-    //         cout << "  GMRES: " << elapsed(gmres0, gmres1) << " s." << endl;
-    //         cout << "<<<<GMRES=" << iter << endl;
-    //     }
-    //     else if(useCGLS){
-    //         timer cg0 = systime();
+        if(useGMRES) {
+            if (ttor::comm_rank() == 0){
+                timer gmres0 = systime();
+                iter = gmres(A, b, x, t, iterations, iterations, residual, verb);
+                timer gmres1 = systime();
+                cout << "GMRES: #iterations: " << iter << ", residual |Ax-b|/|b|: " << (A*x-b).norm() / b.norm() << endl;
+                cout << "  GMRES: " << elapsed(gmres0, gmres1) << " s." << endl;
+                cout << "<<<<GMRES=" << iter << endl;
+            }
+        }
+        else if(useCGLS){
+            timer cg0 = systime();
 
-    //         Index max_iters = (long)iterations;
-    //         iter = cgls(A, b, x, t, max_iters, residual, verb);
-    //         cout << "CGLS: #iterations: " << iter << ", residual |A'(Ax-b)|/|A'(b)|: " << (A.transpose()*(A*x-b)).norm() / (A.transpose()*b).norm() << endl;
-    //         timer cg1 = systime();
-    //         cout << "  CGLS: " << elapsed(cg0, cg1) << " s." << endl;
-    //         cout << "<<<<CGLS=" << iter << endl;
-    //     }
-    // }
+            Index max_iters = (long)iterations;
+            iter = cgls(A, b, x, t, max_iters, residual, verb);
+            cout << "CGLS: #iterations: " << iter << ", residual |A'(Ax-b)|/|A'(b)|: " << (A.transpose()*(A*x-b)).norm() / (A.transpose()*b).norm() << endl;
+            timer cg1 = systime();
+            cout << "  CGLS: " << elapsed(cg0, cg1) << " s." << endl;
+            cout << "<<<<CGLS=" << iter << endl;
+        }
+    }
+    */
     
     MPI_Finalize();
     return 0;  

@@ -122,6 +122,12 @@ void Cluster::sort_edgesOut(bool reverse){
     }
 }
 
+// void Cluster::sort_edgesOut_by_rank(){
+    
+//     edgesOut.sort([](Edge* a, Edge* b){return a->n2->get_order() < b->n2->get_order();});
+    
+// }
+
 EdgeIt Cluster::find_out_edge(int n_order) {
     auto found = find_if(edgesOut.begin(), edgesOut.end(), [&n_order](Edge* e){return e->n2->get_order() == n_order;});
     assert(found != edgesOut.end());
