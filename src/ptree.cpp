@@ -11,7 +11,12 @@ using namespace std;
 using namespace Eigen;
 using namespace ttor;
 
-
+template<typename T>
+vector<T> make_std_vector(view<T> data) {
+    vector<T> data_v(data.size());
+    memcpy(data_v.data(), data.data(), data.size() * sizeof(T));
+    return data_v;
+}
 
 void ParTree::set_nthreads(int n) { this->n_threads = n; };
 void ParTree::set_verbose(int v) { this->verb = v; };
@@ -432,12 +437,14 @@ void ParTree::assemble(SpMat& A){
         for(int i=self->get_rstart(); i< self->get_rstart()+self->rows(); ++i){rmap[i]=self;}
     }
 
+    MPI_Barrier(MPI_COMM_WORLD);
     Communicator comm(MPI_COMM_WORLD);
     Threadpool_dist tp(n_threads, &comm, verb, "assemble_" +to_string(my_rank)+"_");
 
     auto send_edge_am = comm.make_active_msg([&] (int& n1_order,  view<int>& n2_orders){
         Cluster* n1 = get_cluster(n1_order);
-        for (auto ord : n2_orders){
+        // vector<int> n2_orders_v = make_std_vector(n2_orders);
+        for (auto& ord : n2_orders){
             Cluster* n2 = get_cluster(ord);
             assert(cluster2rank(n2) == my_rank);
             bool is_spars_nbr = (n1->lvl()>this->current_bottom) && (n2->lvl()>this->current_bottom) && (n1 != n2);
@@ -482,11 +489,13 @@ void ParTree::assemble(SpMat& A){
         self->sort_edgesOut();
         self->cnbrs = cnbrs;
         // Send 
+       
         for (auto& r: to_send){
             auto n_orders_view = view<int>(r.second.data(), r.second.size());
             int self_order = self->get_order();
             send_edge_am->send(r.first, self_order, n_orders_view);
         }
+        
     }
 
     // prepare fill-in
@@ -508,15 +517,16 @@ void ParTree::assemble(SpMat& A){
     }
     tp.join();
     auto aend = systime();
-    cout << "Time to assemble: " << elapsed(astart, aend)  << endl;
-    cout << "Aspect ratio of top separator: " << (double)get<0>(topsize())/(double)get<1>(topsize()) << endl;
-    
+    if (my_rank == 0){
+        cout << "Time to assemble: " << elapsed(astart, aend)  << endl;
+        cout << "Aspect ratio of top separator: " << (double)get<0>(topsize())/(double)get<1>(topsize()) << endl;
+    }
 }
 
 int ParTree::factorize(){
 	auto fstart = systime();
     assert(this->scale==1);
-    cout << "Lvl " << "Fillin " <<  "Sprsfy " << "Merge " << "Total " <<  "  s_top " << "Threads(b,t) "<< endl;
+    if (my_rank == 0) cout << "Lvl " << "Fillin " <<  "Sprsfy " << "Merge " << "Total " <<  "  s_top " << "Threads(b,t) "<< endl;
     for (this->ilvl=0; this->ilvl < nlevels; ++ilvl){
         auto lvl0 = systime();
         timeval vstart, vend, estart, eend, mstart, mend;
@@ -558,7 +568,7 @@ int ParTree::factorize(){
 
             auto send_edge_am = comm.make_active_msg([&] (int& n1_order,  view<int>& n2_orders){
                 Cluster* n1 = get_cluster(n1_order);
-                for (auto ord : n2_orders){
+                for (auto& ord : n2_orders){
                     Cluster* n2 = get_cluster(ord);
                     assert(cluster2rank(n2) == my_rank);
                     bool is_spars_nbr = (n1->lvl()>this->current_bottom) && (n2->lvl()>this->current_bottom) && (n1 != n2);
@@ -570,7 +580,7 @@ int ParTree::factorize(){
                 Cluster* c = get_cluster(c_order);
                 // Create c->edgesOut 
                 assert(cluster2rank(c)!= my_rank);
-                for (auto n_order: c_edges){
+                for (auto& n_order: c_edges){
                     Cluster* n = get_cluster(n_order);
                     Edge* e = new Edge(c,n);
                     c->edgesOut.push_back(e); // No race condition possible here
@@ -741,7 +751,7 @@ int ParTree::factorize(){
                     *(c_self->A21) = Map<MatrixXd>(U_data.data(), crows, ccols);
                     c->set_T(c->get_order(), Tmat);
 
-                    for (int norder: larfb_deps){
+                    for (int& norder: larfb_deps){
                         Cluster* n = get_interface(norder);
                         auto eit = n->find_out_edge(c_order);
                         assert(cluster2rank((*eit)->n1) == my_rank);
@@ -899,7 +909,7 @@ int ParTree::factorize(){
                     c->set_T(n_order, Tmat);
 
                     // Satisfy dependencies 
-                    for (int m_order: ssrfb_deps){
+                    for (int& m_order: ssrfb_deps){
                         Cluster* m = get_interface(m_order);
                         auto eit_mn = m->find_out_edge(n_order);
                         auto eit_mc = m->find_out_edge(c_order);
@@ -987,7 +997,7 @@ int ParTree::factorize(){
                     Cluster* c = get_interface(c_order);
                     c->reset_size(c_rows, c_cols);
             
-                    for (auto n_order: larfb_deps){
+                    for (auto& n_order: larfb_deps){
                         Cluster* n = get_interface(n_order);
                         assert(cluster2rank(n)==my_rank);
                         auto found = find_if(n->edgesOutNbrSparsification.begin(), n->edgesOutNbrSparsification.end(), 
@@ -1111,7 +1121,7 @@ int ParTree::factorize(){
                     MatrixXd Tsp = Map<MatrixXd>(T_data.data(), c_rank, c_rank);
                     c->set_Q_sp(Qsp);
                     c->set_T_sp(Tsp);
-                    for (auto n_order: larfb_deps){
+                    for (auto& n_order: larfb_deps){
                         Cluster* n = get_interface(n_order);
                         assert(cluster2rank(n)==my_rank);
                         auto found = find_if(n->edgesOutNbrSparsification.begin(), n->edgesOutNbrSparsification.end(), 
@@ -1261,7 +1271,7 @@ int ParTree::factorize(){
                 Threadpool_dist tp(ttor_threads, &comm, verb, "merge_send_" + to_string(ilvl)+"_"+to_string(my_rank)+"_");
 
                 auto send_size_am = comm.make_active_msg([&] (view<int3>& sizes_view){
-                    for (auto orc : sizes_view){
+                    for (auto& orc : sizes_view){
                         int order = orc[0];
                         Cluster* c = get_interface(order);
                         c->reset_size(orc[1], orc[2]);
@@ -1398,22 +1408,28 @@ int ParTree::factorize(){
         mend = systime();
         auto lvl1 = systime();
 
-        cout << ilvl << "    " ;  
-        cout << fixed << setprecision(3)  
-             <<  elapsed(vstart,vend) << "   "
-             <<  elapsed(estart,eend) << "   "
-             <<  elapsed(mstart,mend) << "  " 
-             <<  elapsed(lvl0,lvl1) << "  ("
-             <<  get<0>(topsize()) << ", " << get<1>(topsize()) << ")   (" 
-             <<  blas_threads << ", " << ttor_threads << ")  " 
-        //      << "a.r top_sep: " << (double)get<0>(topsize())/(double)get<1>(topsize()) 
-             << endl;
+        if (my_rank == 0){
+            cout << ilvl << "    " ;  
+            cout << fixed << setprecision(3)  
+                 <<  elapsed(vstart,vend) << "   "
+                 <<  elapsed(estart,eend) << "   "
+                 <<  elapsed(mstart,mend) << "  " 
+                 <<  elapsed(lvl0,lvl1) << "  ("
+                 <<  get<0>(topsize()) << ", " << get<1>(topsize()) << ")   (" 
+                 <<  blas_threads << ", " << ttor_threads << ")  " 
+            //      << "a.r top_sep: " << (double)get<0>(topsize())/(double)get<1>(topsize()) 
+                 << endl;
+        }
+        
 
         
     }
     auto fend = systime();
-    cout << "Tolerance set: " << scientific << this->tol << endl;
-    cout << "Time to factorize:  " << elapsed(fstart,fend) << endl;
+    if (my_rank == 0){
+        cout << "Tolerance set: " << scientific << this->tol << endl;
+        cout << "Time to factorize:  " << elapsed(fstart,fend) << endl;
+    }
+    
 
 	return 0;
 }
