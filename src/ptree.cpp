@@ -170,6 +170,18 @@ void ParTree::alloc_fillin(Cluster* c, Cluster* n, map<int,vector<int>>& edges_t
     return;
 }
 
+// void ParTree::alloc_fillin(Cluster* n1, Cluster* n2){
+//     auto found_out = find_if(n1->edgesOut.begin(), n2->edgesOut.end(), [&n2](Edge* e){return (e->n2 == n2 );});
+//     if (found_out == n1->edgesOut.end()){
+//         Edge* ecn = new_edgeOut(n1, n2);
+//         ecn->interior_deps++;
+//     }
+//     else {
+//         (*found_out)->interior_deps++;
+//     }
+//     return;
+// }
+
 /* Elimination */
 void ParTree::geqrt_cluster(Cluster* c){
     if (c->cols()==0){
@@ -593,7 +605,15 @@ int ParTree::factorize(){
                 for (auto n_order: fulfill_deps){
                     Cluster* n = get_cluster(n_order);
                     assert(cluster2rank(n)== my_rank);
-                    fillin_tf.fulfill_promise({c,n});
+                    // fillin_tf.fulfill_promise({c,n});
+                    // Do it here sequentially
+                    map<int,vector<int>> to_send;
+                    alloc_fillin(c, n, to_send);
+                    int n1_order = n->get_order();
+                    for(auto& r: to_send){
+                        auto edges_view = view<int>(r.second.data(), r.second.size());
+                        send_edge_am->send(r.first, n1_order, edges_view);
+                    }
                 }
                
             });
@@ -636,34 +656,35 @@ int ParTree::factorize(){
                 //     return 6;
                 // });
 
-            fillin_tf.set_mapping([&] (pCluster2 cn){
-                    return cn[1]->get_order()%ttor_threads; // Important to avoid race conditions 
-                })
-                .set_binding([] (pCluster2) {
-                    return true;
-                })
-                .set_indegree([](pCluster2 cn){
-                    return 1;  // get_sparsity on c
-                })
-                .set_task([&] (pCluster2 cn) {
-                    map<int,vector<int>> to_send;
-                    alloc_fillin(cn[0], cn[1], to_send);
-                    int n1_order = cn[1]->get_order();
-                    for(auto& r: to_send){
-                        auto edges_view = view<int>(r.second.data(), r.second.size());
-                        send_edge_am->send(r.first, n1_order, edges_view);
-                    }
-                })
-                .set_name([](pCluster2 cn) {
-                    return "fillin_" + to_string(cn[0]->get_order()) + "_" + to_string(cn[1]->get_order());
-                })
-                .set_priority([&](pCluster2) {
-                    return 7;
-                });
+            // fillin_tf.set_mapping([&] (pCluster2 cn){
+            //         return cn[1]->get_order()%ttor_threads; // Important to avoid race conditions 
+            //     })
+            //     .set_binding([] (pCluster2) {
+            //         return true;
+            //     })
+            //     .set_indegree([](pCluster2 cn){
+            //         return 1;  // get_sparsity on c
+            //     })
+            //     .set_task([&] (pCluster2 cn) {
+            //         map<int,vector<int>> to_send;
+            //         alloc_fillin(cn[0], cn[1], to_send);
+            //         int n1_order = cn[1]->get_order();
+            //         for(auto& r: to_send){
+            //             auto edges_view = view<int>(r.second.data(), r.second.size());
+            //             send_edge_am->send(r.first, n1_order, edges_view);
+            //         }
+            //     })
+            //     .set_name([](pCluster2 cn) {
+            //         return "fillin_" + to_string(cn[0]->get_order()) + "_" + to_string(cn[1]->get_order());
+            //     })
+            //     .set_priority([&](pCluster2) {
+            //         return 7;
+            //     });
 
             // Get rsparsity for the clusters to be eliminated next
             vstart = systime();
             {
+                // We are doing this sequentially
                 for (auto c: this->interiors_current()){
                     if (cluster2rank(c)==my_rank) {
                         this->get_sparsity(c);
@@ -671,7 +692,16 @@ int ParTree::factorize(){
                         map<int,vector<int>> to_send;
                         for (auto n: c->rsparsity){
                             int dest = cluster2rank(n);
-                            if (dest == my_rank) fillin_tf.fulfill_promise({c,n});
+                            if (dest == my_rank) {
+                                // Do it here sequentially
+                                map<int,vector<int>> to_send;
+                                alloc_fillin(c, n, to_send);
+                                int n1_order = n->get_order();
+                                for(auto& r: to_send){
+                                    auto edges_view = view<int>(r.second.data(), r.second.size());
+                                    send_edge_am->send(r.first, n1_order, edges_view);
+                                }
+                            }
                             else to_send[dest].push_back(n->get_order());
                         }
 
