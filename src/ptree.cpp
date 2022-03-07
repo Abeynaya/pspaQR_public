@@ -598,43 +598,43 @@ int ParTree::factorize(){
                
             });
 
-            // get_sparsity_tf.set_mapping([&] (Cluster* c){
-                //     return c->get_order()%ttor_threads; 
-                // })
-                // .set_indegree([](Cluster*){
-                //     return 1;
-                // })
-                // .set_task([&] (Cluster* c) {
-                //     this->get_sparsity(c);
-                // })
-                // .set_fulfill([&] (Cluster* c){
-                //     int c_order = c->get_order();
-                //     map<int,vector<int>> to_send;
-                //     for (auto n: c->rsparsity){
-                //         int dest = cluster2rank(n);
-                //         if (dest == my_rank) fillin_tf.fulfill_promise({c,n});
-                //         else to_send[dest].push_back(n->get_order());
-                //     }
+            get_sparsity_tf.set_mapping([&] (Cluster* c){
+                    return c->get_order()%ttor_threads; 
+                })
+                .set_indegree([](Cluster*){
+                    return 1;
+                })
+                .set_task([&] (Cluster* c) {
+                    this->get_sparsity(c);
+                })
+                .set_fulfill([&] (Cluster* c){
+                    int c_order = c->get_order();
+                    map<int,vector<int>> to_send;
+                    for (auto n: c->rsparsity){
+                        int dest = cluster2rank(n);
+                        if (dest == my_rank) fillin_tf.fulfill_promise({c,n});
+                        else to_send[dest].push_back(n->get_order());
+                    }
 
-                //     if (to_send.size()>0){
-                //         vector<int> out_edges;
-                //         for (auto e:c->edgesOut){
-                //             out_edges.push_back(e->n2->get_order());
-                //         }
-                //         auto c_edges = view<int>(out_edges.data(), out_edges.size());
-                //         for(auto& r: to_send){
-                //             auto fulfill_deps = view<int>(r.second.data(), r.second.size());
-                //             send_fulfill_am->send(r.first, c_order, c_edges, fulfill_deps);
-                //         }
-                //     }
+                    if (to_send.size()>0){
+                        vector<int> out_edges;
+                        for (auto e:c->edgesOut){
+                            out_edges.push_back(e->n2->get_order());
+                        }
+                        auto c_edges = view<int>(out_edges.data(), out_edges.size());
+                        for(auto& r: to_send){
+                            auto fulfill_deps = view<int>(r.second.data(), r.second.size());
+                            send_fulfill_am->send(r.first, c_order, c_edges, fulfill_deps);
+                        }
+                    }
                     
-                // })
-                // .set_name([](Cluster* c) {
-                //     return "get_sparsity_" + to_string(c->get_order());
-                // })
-                // .set_priority([&](Cluster*) {
-                //     return 6;
-                // });
+                })
+                .set_name([](Cluster* c) {
+                    return "get_sparsity_" + to_string(c->get_order());
+                })
+                .set_priority([&](Cluster*) {
+                    return 6;
+                });
 
             fillin_tf.set_mapping([&] (pCluster2 cn){
                     return cn[1]->get_order()%ttor_threads; // Important to avoid race conditions 
@@ -664,29 +664,8 @@ int ParTree::factorize(){
             // Get rsparsity for the clusters to be eliminated next
             vstart = systime();
             {
-                for (auto c: this->interiors_current()){
-                    if (cluster2rank(c)==my_rank) {
-                        this->get_sparsity(c);
-                        int c_order = c->get_order();
-                        map<int,vector<int>> to_send;
-                        for (auto n: c->rsparsity){
-                            int dest = cluster2rank(n);
-                            if (dest == my_rank) fillin_tf.fulfill_promise({c,n});
-                            else to_send[dest].push_back(n->get_order());
-                        }
-
-                        if (to_send.size()>0){
-                            vector<int> out_edges;
-                            for (auto e:c->edgesOut){
-                                out_edges.push_back(e->n2->get_order());
-                            }
-                            auto c_edges = view<int>(out_edges.data(), out_edges.size());
-                            for(auto& r: to_send){
-                                auto fulfill_deps = view<int>(r.second.data(), r.second.size());
-                                send_fulfill_am->send(r.first, c_order, c_edges, fulfill_deps);
-                            }
-                        }
-                    }
+                for (auto self: this->interiors_current()){
+                    if (cluster2rank(self)==my_rank) get_sparsity_tf.fulfill_promise(self);
                 }
             }
             tp.join();
