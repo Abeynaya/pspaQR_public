@@ -91,7 +91,7 @@ int main(int argc, char* argv[]){
 
     // Load matrix
     SpMat A = mmio::sp_mmread<double, int>(matrix);
-
+    A.makeCompressed();
     if (A.rows() < A.cols()){
         cout << " <<< Warning!!! nrows < ncols. Finding QR on A.transpose() instead. " << endl;
         SpMat T = A.transpose();

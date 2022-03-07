@@ -76,7 +76,6 @@ void Cluster::add_edgeOut_threadsafe(Edge* e){
 
 void Cluster::add_edgeIn(Edge* e, bool is_spars_nbr){
     std::lock_guard<std::mutex> lock(mutex_edgeIn);
-    // No need to check if edge is present -- will not be present for sure
     edgesIn.push_back(e);
     if (is_spars_nbr) edgesInNbrSparsification.push_back(e);
     if (e->n1->lvl() == e->n1->merge_lvl()) col_interior_deps++;

@@ -452,10 +452,10 @@ void ParTree::assemble(SpMat& A){
     MPI_Barrier(MPI_COMM_WORLD);
     Communicator comm(MPI_COMM_WORLD);
     Threadpool_dist tp(n_threads, &comm, verb, "assemble_" +to_string(my_rank)+"_");
+    Taskflow<Cluster*> assemble_tf(&tp, verb);
 
     auto send_edge_am = comm.make_active_msg([&] (int& n1_order,  view<int>& n2_orders){
         Cluster* n1 = get_cluster(n1_order);
-        // vector<int> n2_orders_v = make_std_vector(n2_orders);
         for (auto& ord : n2_orders){
             Cluster* n2 = get_cluster(ord);
             assert(cluster2rank(n2) == my_rank);
@@ -464,56 +464,86 @@ void ParTree::assemble(SpMat& A){
         }
     });
 
+    assemble_tf.set_mapping([&] (Cluster* c){
+            return c->get_order()%n_threads; 
+        })
+        .set_indegree([](Cluster*){
+            return 1;
+        })
+        .set_task([&] (Cluster* self) {
+            set<Cluster*> cnbrs; // Non-zeros entries in the column belonging to self/another cluster
+            for (int j= self->get_cstart(); j < self->get_cstart()+self->cols(); ++j){
+                for (SpMat::InnerIterator it(App,j); it; ++it){
+                    Cluster* n = rmap[it.row()];
+                    cnbrs.insert(n);
+                }
+            }
+            cnbrs.insert(self);
+            map<int, vector<int>> to_send;
+            for (auto nbr: cnbrs){
+                MatrixXd* sA = new MatrixXd(nbr->rows(), self->cols());
+                sA->setZero();
+                block2dense(rowval, colptr, nnzval, nbr->get_rstart(), self->get_cstart(), nbr->rows(), self->cols(), sA, false); 
+                Edge* e = new Edge(self, nbr, sA);
+                self->add_edgeOut(e);
+
+                if (self != nbr){
+                    // nbr->add_edgeIn(e);
+                    int dest = cluster2rank(nbr);
+                    if (dest == my_rank) {
+                        bool is_spars_nbr = self->lvl()>0 && nbr->lvl()>0 && self != nbr;
+                        nbr->add_edgeIn(e, is_spars_nbr); // thread-safe
+                    }
+                    else to_send[dest].push_back(nbr->get_order());
+                }
+                else {
+                    //self == nbr
+                    self->add_self_edge(e);
+                }
+            }
+            self->sort_edgesOut();
+            self->cnbrs = cnbrs;
+            // Send 
+            
+            for (auto& r: to_send){
+                auto n_orders_view = view<int>(r.second.data(), r.second.size());
+                int self_order = self->get_order();
+                send_edge_am->send(r.first, self_order, n_orders_view);
+            }
+        })
+        .set_name([](Cluster* c) {
+            return "assemble_" + to_string(c->get_order());
+        })
+        .set_priority([&](Cluster*) {
+            return 6;
+        });
+
+    auto tas0=systime();
     // Assemble edges
     for (auto self: bottom_original()){
         if (cluster2rank(self)!= my_rank) continue;
-
-        set<Cluster*> cnbrs; // Non-zeros entries in the column belonging to self/another cluster
-        for (int j= self->get_cstart(); j < self->get_cstart()+self->cols(); ++j){
-            for (SpMat::InnerIterator it(App,j); it; ++it){
-                Cluster* n = rmap[it.row()];
-                cnbrs.insert(n);
-            }
-        }
-        cnbrs.insert(self);
-        map<int, vector<int>> to_send;
-        for (auto nbr: cnbrs){
-            MatrixXd* sA = new MatrixXd(nbr->rows(), self->cols());
-            sA->setZero();
-            block2dense(rowval, colptr, nnzval, nbr->get_rstart(), self->get_cstart(), nbr->rows(), self->cols(), sA, false); 
-            Edge* e = new Edge(self, nbr, sA);
-            self->add_edgeOut(e);
-
-            if (self != nbr){
-                // nbr->add_edgeIn(e);
-                int dest = cluster2rank(nbr);
-                if (dest == my_rank) {
-                    bool is_spars_nbr = self->lvl()>0 && nbr->lvl()>0 && self != nbr;
-                    nbr->add_edgeIn(e, is_spars_nbr); // thread-safe
-                }
-                else to_send[dest].push_back(nbr->get_order());
-            }
-            else {
-                //self == nbr
-                self->add_self_edge(e);
-            }
-        }
-        self->sort_edgesOut();
-        self->cnbrs = cnbrs;
-        // Send 
-       
-        for (auto& r: to_send){
-            auto n_orders_view = view<int>(r.second.data(), r.second.size());
-            int self_order = self->get_order();
-            send_edge_am->send(r.first, self_order, n_orders_view);
-        }
-        
+        assemble_tf.fulfill_promise(self);
     }
+    auto j0 = systime();
+    cout << "thread here in " << my_rank << endl;
+    tp.join();
+    auto j1 = systime();
+    cout << "join: " << elapsed(j0,j1) << endl;
+    auto tas1=systime();
+    cout << "assemble edges: " << elapsed(tas0,tas1) << endl;
 
+    auto td0= systime();
     // prepare fill-in
+    // This piece of code is slower on mutiple threads and nodes although only the main thread is running it -- WEIRD
+    // So do tp.join() before
     { // ONLY original distance two connections
         // On ALL RANKS FOR ALL CLUSTERS
+        auto tata0 = systime();
         SpMat AtA = App.transpose()*App; 
+        AtA.makeCompressed();
+        auto tata1 = systime();
+        cout << "ata: " << elapsed(tata0,tata1) << endl;
+
         for (auto self: bottom_original()){ // at the leaf level
             for (int col=self->get_cstart(); col < self->get_cstart()+self->cols(); ++col){
                 for (SpMat::InnerIterator it(AtA,col); it; ++it){
@@ -525,14 +555,17 @@ void ParTree::assemble(SpMat& A){
                     }
                 }
             }
-        }
+        } 
     }
-    tp.join();
+    auto td1 = systime();
+    cout << "dist2: " << elapsed(td0,td1) << endl;
+
+    
     auto aend = systime();
-    if (my_rank == 0){
+    // if (my_rank == 0){
         cout << "Time to assemble: " << elapsed(astart, aend)  << endl;
         cout << "Aspect ratio of top separator: " << (double)get<0>(topsize())/(double)get<1>(topsize()) << endl;
-    }
+    // }
 }
 
 int ParTree::factorize(){
