@@ -5,7 +5,7 @@
 #include <iomanip> 
 #include <random>
 #include "tree.h"
-#include "partition.h"
+
 
 using namespace std;
 using namespace Eigen;
@@ -631,13 +631,12 @@ void Tree::partition(SpMat& A){
     cperm = VectorXi::LinSpaced(c,0,c-1);
 
     // Apply permutation
-    vector<ClusterID> cpermed(c);
+    this->cpermed = vector<ClusterID>(c);
     initPermutation(nlevels, cmap, cperm); 
     transform(cperm.data(), cperm.data()+cperm.size(), cpermed.begin(), [&cmap](int i){return cmap[i];});
 
     SpMat Ap = col_perm(A, this->cperm);
-    VectorXi c2r_count(c);
-    c2r_count.setZero();
+    this->c2r_count = VectorXi::Zero(c);
     vector<vector<int>> c2r(c);
 
     if (!this->square){

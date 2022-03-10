@@ -9,12 +9,12 @@ OBJDIR = obj
 INCLUDE = -I$(INCDIR) -I$(EXTDIR) -I$(EIGENDIR) -I$(BLASDIR) -I$(TTORDIR)
 LDFLAGS +=  -L$(BLASLIB)
 
-CFLAGS = -std=c++14 -Wall -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE
+CFLAGS = -std=c++14 -Wall -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE 
 CFLAGS += -DTTOR_MPI
 ifdef DEBUG
-    CFLAGS += -g -Og -D_GLIBCXX_DEBUG -fsanitize=address  
+    CFLAGS += -g -Og -D_GLIBCXX_DEBUG -fsanitize=address -fsanitize=thread
 else
-    CFLAGS += -g -O3 -DEIGEN_NO_DEBUG -DNDEBUG -Wno-unused-variable  
+    CFLAGS += -g -O3 -DEIGEN_NO_DEBUG -DNDEBUG -Wno-unused-variable 
     CFLAGS += -mtune=native -march=native -fomit-frame-pointer -funroll-loops -ffast-math 
     #-funsafe-math-optimizations
 

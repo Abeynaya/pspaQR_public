@@ -25,7 +25,12 @@
 #include "operations.h"
 #include "toperations.h"
 #include "profile.h"
+#include "partition.h"
 
+void initPermutation(int nlevels, const std::vector<ClusterID>& cmap, Eigen::VectorXi& cperm);
+void form_rmap(SpMat& A, std::vector<ClusterID>& rmap, const std::vector<ClusterID>& cmap, Eigen::VectorXi& cperm);
+void form_rmap(SpMat& Ap, const std::vector<ClusterID>& cpermed, Eigen::VectorXi& rperm,
+                 Eigen::VectorXi& c2r_count, std::vector<std::vector<int>> c2r, bool matched);
 
 // Tree
 class Tree{
@@ -47,6 +52,8 @@ class Tree{
         Eigen::MatrixXd* Xcoo;
         Eigen::VectorXi cperm; // Column permutation of the matrix
         Eigen::VectorXi rperm; // Row permutation of the matrix (initial)
+        Eigen::VectorXi c2r_count; // Needed to be stored for pspaQR
+        std::vector<ClusterID> cpermed; // Needed to be stored for pspaQR
 
         // Stores the clusters at each level of the cluster hierarchy
         std::vector<std::list<Cluster*>> bottoms; // bottoms.size() = nlevels

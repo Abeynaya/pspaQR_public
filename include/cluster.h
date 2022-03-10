@@ -181,7 +181,7 @@ private:
 public: 
     int rposparent; // row position in the parent
     int cposparent; // column position in the parent
-    std::set<Cluster*> children;
+    std::list<Cluster*> children; // make it a list because order matters in pspaQR (may not really matter)
     std::set<Cluster*> rsparsity; 
     std::set<Cluster*> dist2connxs; 
 
@@ -260,12 +260,13 @@ public:
     void set_parentid(ClusterID cid);
     void set_parent(Cluster* p);
     void add_children(Cluster* c);
+    void sort_children();
 
     /* Edges */
     Edge* self_edge();
     void add_self_edge(Edge*);
     void add_edgeOut(Edge* e);
-    void add_edgeOut_threadsafe(Edge* e);
+    void add_edgeOut_threadsafe(Cluster* n2, Eigen::MatrixXd* A);
     void add_edgeIn(Edge* e);
     void add_edgeOutFillin(Edge* e);
 

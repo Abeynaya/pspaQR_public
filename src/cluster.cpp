@@ -54,7 +54,10 @@ Cluster* Cluster::get_parent(){return parent;}
 ClusterID Cluster::get_parentid(){return parentid;}
 void Cluster::set_parentid(ClusterID cid){parentid = cid;}
 void Cluster::set_parent(Cluster* p){parent = p;}
-void Cluster::add_children(Cluster* c){children.insert(c);}
+void Cluster::add_children(Cluster* c){children.push_back(c);}
+void Cluster::sort_children(){
+    children.sort([](Cluster* c1, Cluster* c2){return c1->get_id() < c2->get_id();});
+}
 
 Edge* Cluster::self_edge(){
     assert(eself!=nullptr);
@@ -69,9 +72,19 @@ void Cluster::add_edgeIn(Edge* e){edgesIn.push_back(e);}
 
 void Cluster::add_edgeOutFillin(Edge* e){edgesOutFillin.push_back(e);}
 
-void Cluster::add_edgeOut_threadsafe(Edge* e){
+void Cluster::add_edgeOut_threadsafe(Cluster* n2, Eigen::MatrixXd* A){
     std::lock_guard<std::mutex> lock(mutex_edgeOut);
-    edgesOut.push_back(e);
+    auto found = find_if(edgesOut.begin(), edgesOut.end(), [& n2](Edge* e){return e->n2 == n2;});
+    if (found == edgesOut.end()){
+        edgesOut.push_back(new Edge(this, n2, A)); 
+    }
+    else {
+        std::cout << "wtf??" << std::endl;
+        if ((*found)->A21 == nullptr) {
+            (*found)->A21 = A;
+        } 
+        else *((*found)->A21) = *A;
+    }
 }
 
 void Cluster::add_edgeIn(Edge* e, bool is_spars_nbr){
@@ -160,8 +173,6 @@ Eigen::MatrixXd* Cluster::get_T(int norder){
     assert(this->Tmap.at(norder)->rows() != 0);
     return this->Tmap.at(norder);
 }
-
-
 
 /* Scaling */
 void Cluster::set_Qs(Eigen::MatrixXd& Q_) {

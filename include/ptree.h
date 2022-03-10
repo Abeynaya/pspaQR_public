@@ -120,6 +120,7 @@ public:
 	Edge* new_edgeOut(Cluster*, Cluster*);
 	Edge* new_edgeOutFillin(Cluster*, Cluster*);
 
+	void partition(SpMat& A);
 	void assemble(SpMat& A);
 	int factorize();
 	void solve(Eigen::VectorXd b, Eigen::VectorXd& x) const;

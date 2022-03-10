@@ -275,7 +275,9 @@ int main(int argc, char* argv[]){
     t.assemble(A);
 
     // Factorize
+    MPI_Barrier(MPI_COMM_WORLD);
     int err = t.factorize();
+    MPI_Barrier(MPI_COMM_WORLD);
 
     
     if (!err)

@@ -23,17 +23,7 @@ void ParTree::set_verbose(int v) { this->verb = v; };
 void ParTree::set_ttor_log(int l) { this->ttor_log = l; };
 int ParTree::nranks() const{return n_ranks;}
 
-/* Helper function */
-// EdgeIt find_out_edge(Cluster* m, Cluster* n){
-//     auto found = find_if(m->edgesOut.begin(), m->edgesOut.end(), [&n](Edge* e_m){return e_m->n2 == n;});
-//     assert(found != m->edgesOut.end());
-//     // if (found == m->edgesOut.end()){
-//     //     found = find_if(m->edgesOutFillin.begin(), m->edgesOutFillin.end(), [&n](Edge* e_m){return e_m->n2 == n;});
-//     //     assert( found!= m->edgesOutFillin.end()); // Has to exist
-//     // }
-//     return found;
-// }
-
+/* Helper functions */
 bool ParTree::want_sparsify(Cluster* c) const{
     if (c->merge_lvl() < skip || c->merge_lvl() >= nlevels-2 || this->tol==0){
         return false;
@@ -170,18 +160,6 @@ void ParTree::alloc_fillin(Cluster* c, Cluster* n, map<int,vector<int>>& edges_t
     return;
 }
 
-// void ParTree::alloc_fillin(Cluster* n1, Cluster* n2){
-//     auto found_out = find_if(n1->edgesOut.begin(), n2->edgesOut.end(), [&n2](Edge* e){return (e->n2 == n2 );});
-//     if (found_out == n1->edgesOut.end()){
-//         Edge* ecn = new_edgeOut(n1, n2);
-//         ecn->interior_deps++;
-//     }
-//     else {
-//         (*found_out)->interior_deps++;
-//     }
-//     return;
-// }
-
 /* Elimination */
 void ParTree::geqrt_cluster(Cluster* c){
     if (c->cols()==0){
@@ -254,6 +232,7 @@ void ParTree::ssrfb_edges(Edge* cn, Edge* cm, Edge* mn){ // c->n edge contains Q
     assert(mn->A21->rows() == nrows);
     
     int nb=min(32,c->cols());
+    #if 1
     // use directly from mkl_lapack.h -- routine from mkl_lapacke.h doesn't work
     char side = 'L';
     char trans = 'T';
@@ -269,6 +248,15 @@ void ParTree::ssrfb_edges(Edge* cn, Edge* cm, Edge* mn){ // c->n edge contains Q
                                 mn->A21->data(), &nrows,
                                 work.data(), &info);
     assert(info == 0);
+    #else // Segfaults
+        int info = LAPACKE_dtpmqrt(LAPACK_COL_MAJOR, 'L', 'T', nrows, ncols, c->cols(), 
+                                        0, nb, 
+                                        cn->A21->data(), nrows,
+                                        c->get_T(n->get_order())->data(), nb,
+                                        cm->A21->data(), c->rows(),
+                                        mn->A21->data(), nrows);
+        assert(info == 0);
+    #endif
     return;
 }
 
@@ -424,6 +412,189 @@ void ParTree::sparsify_rrqr_only(Cluster* c){
 
 }
 
+void ParTree::partition(SpMat& A){
+    auto t0 = systime();
+    int r = A.rows();
+    int c = A.cols();
+    this->nrows = r; 
+    this->ncols = c;
+
+    if (my_rank == 0) {
+        bool geo = (Xcoo != nullptr);
+        vector<ClusterID> cmap(c);
+        
+        if (geo){
+            cout << "Using GeometricPartition... " << endl;
+            cmap = GeometricPartitionAtA(A, this->nlevels, Xcoo, this->use_matching);
+        }
+        else{
+            #ifdef USE_METIS
+                cout << "Using Metis Partition... "<< endl;
+                cmap = MetisPartition(A, this->nlevels);
+            #else
+                cout << "Using Hypergraph Partition... "<< endl;
+                cmap = HypergraphPartition(A, this->nlevels);
+            #endif
+        }
+        
+        rperm = VectorXi::LinSpaced(r,0,r-1);
+        cperm = VectorXi::LinSpaced(c,0,c-1);
+
+        // Apply permutation
+        this->cpermed = vector<ClusterID>(c);
+        initPermutation(nlevels, cmap, cperm); 
+        transform(cperm.data(), cperm.data()+cperm.size(), cpermed.begin(), [&cmap](int i){return cmap[i];});
+
+        SpMat Ap = col_perm(A, this->cperm);
+        this->c2r_count = VectorXi::Zero(c);
+        vector<vector<int>> c2r(c);
+
+
+        if (!this->square){
+            #ifdef HSL_AVAIL
+                if (this->use_matching){
+                    bipartite_row_matching(Ap, cpermed, rperm);
+                    form_rmap(Ap, cpermed, rperm, c2r_count, c2r, true);
+                }
+                else {
+                    form_rmap(Ap, cpermed, rperm, c2r_count, c2r, false);
+                }
+            #else
+                form_rmap(Ap, cpermed, rperm, c2r_count, c2r, false);
+            #endif
+        }
+        else{
+            c2r_count.setOnes();
+
+            #ifdef HSL_AVAIL
+                if (this->use_matching){
+                    bipartite_row_matching(Ap, cpermed, rperm);
+                }
+                else { 
+                    rperm = cperm;
+                }    
+            #else 
+                rperm = cperm;
+            #endif
+        }
+    }// do till here only on rank 0
+
+    MPI_Barrier(MPI_COMM_WORLD);
+    Communicator comm(MPI_COMM_WORLD);
+    Threadpool_dist tp(n_threads, &comm, verb, "partition_"+to_string(my_rank)+"_");
+
+    auto send_perm_data_am = comm.make_active_msg([&] (view<int>& rperm_view, view<int>& cperm_view, view<int>& c2rcount_view, view<ClusterID>& cpermed_view){
+        this->rperm = Map<VectorXi>(rperm_view.data(), this->rows());
+        this->cperm = Map<VectorXi>(cperm_view.data(), this->cols());
+        this->c2r_count = Map<VectorXi>(c2rcount_view.data(), this->cols());
+        this->cpermed = make_std_vector(cpermed_view);
+    });
+
+    // Send rperm, cperm, c2r_count, cpermed to all other ranks
+    if (my_rank == 0){
+        auto rperm_view = view<int>(rperm.data(), r);
+        auto cperm_view = view<int>(cperm.data(), c);
+        auto c2rcount_view = view<int>(c2r_count.data(), c);
+        auto cpermed_view = view<ClusterID>(cpermed.data(), c);
+
+        for(int dest=1; dest<nranks(); ++dest){
+            send_perm_data_am->send(dest, rperm_view, cperm_view, c2rcount_view, cpermed_view);
+        }
+    }
+    tp.join();
+    MPI_Barrier(MPI_COMM_WORLD);
+
+    /* Set the initial clusters: lvl 0 in cluster heirarchy */
+    int k=0;
+    int l=0;
+    for (; k < c;){
+        int knext = k+1;
+        ClusterID cid = cpermed[k];
+        int nr2c = c2r_count[k];
+
+        while(knext < c && cid == cpermed[knext]){
+            nr2c += c2r_count[knext];
+            knext++;
+        }
+
+        assert(nr2c != 0);
+        Cluster* self = new Cluster(k, knext-k, l, nr2c, cid, get_new_order(),0);
+        this->bottoms[0].push_back(self);
+        if (cid.level()==0) {
+            interiors[0].push_back(self);
+        }
+        else {
+            interfaces[0].push_back(self);
+        }
+        // To sparsify?
+        if (cid.level()>0 && cid.left().level()<=0 && cid.right().level()<=0){
+            interfaces2sparsify[0].push_back(self);
+        }
+        else if (cid.level()>0){
+            interfaces_no_sparsify[0].push_back(self);
+        }
+
+        k = knext; 
+        l += nr2c;
+    }
+
+    assert(l==r);
+
+
+    /* Set parent and children and build the cluster heirarchy */
+    for (int lvl=1; lvl < nlevels; ++lvl){
+        auto begin = find_if(bottoms[lvl-1].begin(), bottoms[lvl-1].end(), [lvl](const Cluster* s){return s->lvl() >= lvl;});
+        auto end = bottoms[lvl-1].end();
+
+        for(auto self = begin; self != end; self++){
+            assert((*self)->lvl() >= lvl);
+            auto cid = (*self)->get_id();
+            (*self)->set_parentid(merge_if(cid, lvl));
+        }
+        for (auto k = begin; k != end; ){
+            auto idparent = (*k)->get_parentid();
+            set<Cluster*> children;
+            children.insert(*k);
+            int children_csize = (*k)->cols();
+            int children_rsize = (*k)->rows();
+            int children_cstart = (*k)->get_cstart();
+            int children_rstart = (*k)->get_rstart();
+            k++;
+            while(k != end && idparent == (*k)->get_parentid()){
+                children.insert(*k);
+                children_csize += (*k)->cols();
+                children_rsize += (*k)->rows();
+                k++;
+            }
+            Cluster* parent = new Cluster(children_cstart, children_csize, children_rstart, children_rsize, idparent, get_new_order(), lvl);
+            // Include parent cluster with all the children
+            for (auto c: children){
+                assert(parent != nullptr);
+                c->set_parent(parent); 
+                parent->add_children(c);
+            }
+            parent->sort_children(); // I don't know why the order of children are NOT the same in different nodes -- so this is necessary
+
+            bottoms[lvl].push_back(parent);
+            if (idparent.level()== lvl) {
+                interiors[lvl].push_back(parent);
+            }
+            else {
+                interfaces[lvl].push_back(parent);
+            }
+            // To sparsify?
+            if (idparent.level()>lvl && idparent.left().level()<=lvl && idparent.right().level()<=lvl){
+                interfaces2sparsify[lvl].push_back(parent);
+            }
+            else if (idparent.level()>lvl) {
+                interfaces_no_sparsify[lvl].push_back(parent);
+            }
+        }
+    }
+    auto t1 = systime();
+    cout << "Time to partition: " << elapsed(t0, t1) << endl;
+}
+
 void ParTree::assemble(SpMat& A){
     auto astart = systime();
     int r = A.rows();
@@ -518,17 +689,15 @@ void ParTree::assemble(SpMat& A){
             return 6;
         });
 
+    MPI_Barrier(MPI_COMM_WORLD);
     auto tas0=systime();
     // Assemble edges
     for (auto self: bottom_original()){
         if (cluster2rank(self)!= my_rank) continue;
         assemble_tf.fulfill_promise(self);
     }
-    auto j0 = systime();
-    cout << "thread here in " << my_rank << endl;
     tp.join();
-    auto j1 = systime();
-    cout << "join: " << elapsed(j0,j1) << endl;
+    MPI_Barrier(MPI_COMM_WORLD);
     auto tas1=systime();
     cout << "assemble edges: " << elapsed(tas0,tas1) << endl;
 
@@ -715,6 +884,7 @@ int ParTree::factorize(){
             //     });
 
             // Get rsparsity for the clusters to be eliminated next
+            MPI_Barrier(MPI_COMM_WORLD);
             vstart = systime();
             {
                 // We are doing this sequentially
@@ -753,6 +923,7 @@ int ParTree::factorize(){
                 }
             }
             tp.join();
+            MPI_Barrier(MPI_COMM_WORLD);
             vend = systime();
 
             auto log0 = systime();
@@ -984,11 +1155,9 @@ int ParTree::factorize(){
                     assert(eit_cn != c->edgesOut.end());
                     Edge* e_cn = *eit_cn;
                     assert(e_cn->A21 != nullptr);
-                    // if (e_cn->A21 == nullptr) e_cn->A21 = new MatrixXd(n_rows, c_cols);
                     *(e_cn->A21) = Map<MatrixXd>(U_data.data(), n_rows, c_cols);
 
                     int nb = min(32, c_cols);
-                     // c->create_T(n_order);
                     MatrixXd Tmat = Map<MatrixXd>(T_data.data(), nb, c_cols);
                     c->set_T(n_order, Tmat);
 
@@ -1020,6 +1189,11 @@ int ParTree::factorize(){
                     // Next tsqrt -- same rank
                     if (eit_next != c->edgesOut.end()){
                         tsqrt_tf.fulfill_promise(eit_next);
+                    }
+                    else {
+                        // if (my_rank == 1){
+                            // cout << c->get_id() << endl << *c->self_edge()->A21 << endl << endl;
+                        // }
                     }
                     // All ssrfb in its row
                     map<int,vector<int>> send_to;
@@ -1309,6 +1483,7 @@ int ParTree::factorize(){
                 });
 
             // Eliminate interiors
+            MPI_Barrier(MPI_COMM_WORLD);
             estart = systime();
             {
                 for (auto self: this->interiors_current()){ 
@@ -1326,6 +1501,8 @@ int ParTree::factorize(){
                 }
             }
             tp.join();
+            MPI_Barrier(MPI_COMM_WORLD);
+
             eend = systime();
 
             auto log0 = systime();
@@ -1350,6 +1527,14 @@ int ParTree::factorize(){
                     c->set_eliminated();
                 }
 
+                vector<int3> to_send;
+                for (auto sold: this->interfaces_current()){
+                    if (cluster2rank(sold) == my_rank){ // Contains the most up-to-date info
+                        // Send to all ranks
+                        to_send.push_back({sold->get_order(),sold->rows(),sold->cols()});
+                    }
+                }
+
                 // Send all interfaces 
                 Communicator comm(MPI_COMM_WORLD);
                 Threadpool_dist tp(ttor_threads, &comm, verb, "merge_send_" + to_string(ilvl)+"_"+to_string(my_rank)+"_");
@@ -1367,20 +1552,10 @@ int ParTree::factorize(){
                     Cluster* n2 = get_interface(n2_order);
                     MatrixXd* A21 = new MatrixXd(A_rows, A_cols);
                     *A21 = Map<MatrixXd>(A.data(), A_rows, A_cols);
-                    auto found = find_if(n1->edgesOut.begin(), n1->edgesOut.end(), [& n2_order](Edge* e){return e->n2->get_order() == n2_order;});
-                    if (found == n1->edgesOut.end()){
-                        n1->add_edgeOut_threadsafe(new Edge(n1, n2, A21)); // thread-safe
-                    };
+                    n1->add_edgeOut_threadsafe(n2, A21);
                 });
 
-                vector<int3> to_send;
-                for (auto sold: this->interfaces_current()){
-                    if (cluster2rank(sold) == my_rank){ // Contains the most up-to-date info
-                        // Send to all ranks
-                        to_send.push_back({sold->get_order(),sold->rows(),sold->cols()});
-                    }
-                }
-
+                
                 auto sizes_view = view<int3>(to_send.data(), to_send.size());
                 for (int dest=0; dest < nranks(); ++dest){
                     if(dest!=my_rank) {
@@ -1406,6 +1581,8 @@ int ParTree::factorize(){
                     }
                 }
                 tp.join();
+                MPI_Barrier(MPI_COMM_WORLD);
+
             }
 
             // Actual merge
@@ -1438,12 +1615,11 @@ int ParTree::factorize(){
 
             auto send_edge_am = comm.make_active_msg([&] (int& n1_order,  view<int>& n2_orders){
                 Cluster* n1 = get_cluster(n1_order);
-                for (auto ord : n2_orders){
+                for (auto& ord : n2_orders){
                     Cluster* n2 = get_cluster(ord);
                     assert(cluster2rank(n2) == my_rank);
                     bool is_spars_nbr = (n1->lvl()>this->current_bottom) && (n2->lvl()>this->current_bottom) && (n1 != n2);
                     n2->add_edgeIn(new Edge(n1, n2), is_spars_nbr); // e->A21 = new MatrixXd(0,0) -- thread safe
-                    // if (n1->lvl() == n1->merge_lvl()) n2->col_interior_deps++;
                 }
             });
 
@@ -1470,12 +1646,14 @@ int ParTree::factorize(){
                     return 5;
                 });
 
+            MPI_Barrier(MPI_COMM_WORLD);
             for (auto snew: this->bottom_current()){
                 if (cluster2rank(snew) == my_rank) {
                     update_edges_tf.fulfill_promise(snew);
                 }
             }
             tp.join();
+            MPI_Barrier(MPI_COMM_WORLD);
 
             auto log0 = systime();
             if (this->ttor_log){
@@ -1724,6 +1902,12 @@ void ParTree::solve(VectorXd b, VectorXd& x) const{
                 assert(cluster2rank(c) == my_rank);
             });
 
+        // auto send_to_print_am = comm.make_active_msg(
+        //     [&] (int& c_order, view<double>& xc_view, int& c_size){
+        //         VectorXd xc = Map<VectorXd>(xc_view.data(), c_size);
+        //         cout << "rank: " << my_rank << " ord: " << c_order << endl << xc << endl;
+        //     });
+
         fwd_geqrt.set_mapping([&] (Cluster* c){
                 return (c->get_order()+1)%ttor_threads; 
             })
@@ -1885,6 +2069,8 @@ void ParTree::solve(VectorXd b, VectorXd& x) const{
                 return 5;
             });
 
+        MPI_Barrier(MPI_COMM_WORLD);
+
         for(auto c: this->interiors[0]){
             if (cluster2rank(c) == my_rank) fwd_geqrt.fulfill_promise(c);
         }
@@ -1895,6 +2081,8 @@ void ParTree::solve(VectorXd b, VectorXd& x) const{
             }
         }
         tp.join();
+        MPI_Barrier(MPI_COMM_WORLD);
+
     }
 
 
@@ -2064,11 +2252,13 @@ void ParTree::solve(VectorXd b, VectorXd& x) const{
                 return 5;
             });
 
+        MPI_Barrier(MPI_COMM_WORLD);
         for(auto c: this->interiors[nlevels-1]){
             if (cluster2rank(c) == my_rank) bwd_trsv.fulfill_promise(c);
         }
 
         tp.join();
+        MPI_Barrier(MPI_COMM_WORLD);
     }
 
     // Permute back
