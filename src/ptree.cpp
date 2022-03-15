@@ -336,8 +336,6 @@ void ParTree::compute_new_edges(Cluster* snew){
     for (auto n: snew_cnbrs){
         Edge* e = new_edgeOut(snew, n);
         if (snew==n) snew->add_self_edge(e);
-        // If new edgeIn has to be sent to a different rank
-        // if (cluster2rank(n)!= my_rank) edges_to_send[cluster2rank(n)].push_back(n->get_order());
     }
 
     // Sort edges
@@ -1032,7 +1030,7 @@ int ParTree::factorize(){
                 assert(ttor_threads * blas_threads <= n_threads);
             }
 
-            Logger log(10000000); 
+            Logger log(100); 
             if (this->ttor_log){
                 // log = Logger(10000000);
                 tp.set_logger(&log);
@@ -1564,6 +1562,8 @@ int ParTree::factorize(){
         if (this->ilvl < nlevels-1)
         {
             {
+                auto mt0= systime();
+
                 // Set all interiors to eliminated -- important to not interfere with the merging process
                 for (auto c: this->interiors_current()){
                     c->set_eliminated();
@@ -1596,11 +1596,12 @@ int ParTree::factorize(){
                     *(*eit)->A21 = Map<MatrixXd>(A.data(), A_rows, A_cols);
                 });
 
-                
-                auto sizes_view = view<int3>(to_send.data(), to_send.size());
-                for (int dest=0; dest < nranks(); ++dest){
-                    if(dest!=my_rank) {
-                        send_size_am->send(dest, sizes_view);
+                if (this->ilvl >= skip && this->tol != 0){ // no need to send sizes if sparsification didn't happen
+                    auto sizes_view = view<int3>(to_send.data(), to_send.size());
+                    for (int dest=0; dest < nranks(); ++dest){
+                        if(dest!=my_rank) {
+                            send_size_am->send(dest, sizes_view);
+                        }
                     }
                 }
 
@@ -1623,9 +1624,12 @@ int ParTree::factorize(){
                 }
                 tp.join();
                 MPI_Barrier(MPI_COMM_WORLD);
+                auto mt1= systime();
+                cout << "Time to send merge: " << elapsed(mt0,mt1) <<endl;
 
             }
 
+            auto mt0= systime();
             // Actual merge
             this->current_bottom++;
             // Update sizes -- sequential because we need a synch point after this and this is cheap anyway
@@ -1649,22 +1653,11 @@ int ParTree::factorize(){
             Threadpool_dist tp(ttor_threads, &comm, verb, "merge_" + to_string(ilvl)+"_"+to_string(my_rank)+"_");
             Taskflow<Cluster*> update_edges_tf(&tp, verb);
             Taskflow<Cluster*> update_edges_empty_tf(&tp, verb);
-
             
             Logger log(1000); 
             if (this->ttor_log){
                 tp.set_logger(&log);
             }
-
-            // auto send_edge_am = comm.make_active_msg([&] (int& n1_order,  view<int>& n2_orders){
-            //     Cluster* n1 = get_cluster(n1_order);
-            //     for (auto& ord : n2_orders){
-            //         Cluster* n2 = get_cluster(ord);
-            //         assert(cluster2rank(n2) == my_rank);
-            //         bool is_spars_nbr = (n1->lvl()>this->current_bottom) && (n2->lvl()>this->current_bottom) && (n1 != n2);
-            //         n2->add_edgeIn(new Edge(n1, n2), is_spars_nbr); // e->A21 = new MatrixXd(0,0) -- thread safe
-            //     }
-            // });
 
             /* Compute new edges */
             update_edges_tf.set_mapping([&] (Cluster* c){
@@ -1674,13 +1667,7 @@ int ParTree::factorize(){
                     return 1;
                 })
                 .set_task([&] (Cluster* c) {
-                    // map<int,vector<int>> to_send;
                     compute_new_edges(c);
-                    // int c_order = c->get_order();
-                    // for (auto& r: to_send){
-                    //     auto edges_view = view<int>(r.second.data(), r.second.size());
-                    //     send_edge_am->send(r.first, c_order, edges_view);
-                    // }
                 })
                 .set_name([](Cluster* c) {
                     return "update_edges_" + to_string(c->get_order());
@@ -1725,6 +1712,8 @@ int ParTree::factorize(){
                 logfile.close();
             }
             auto log1 = systime();
+            auto mt1= systime();
+            cout << "Time to update edges: " << elapsed(mt0, mt1)<< endl;
 
         }
         mend = systime();
