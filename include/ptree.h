@@ -71,7 +71,9 @@ private:
 	
 
 	// Methods needed for elimination
-	void alloc_fillin(Cluster*, Cluster*, map<int,vector<int>>&);
+	void alloc_fillin(Cluster*, Cluster*);
+	void alloc_fillin_empty(Cluster*, Cluster*);
+
 	void geqrt_cluster(Cluster*);
 	void larfb_edge(Edge*);
 	void ssrfb_edges(Edge*,Edge*,Edge*);
@@ -87,7 +89,9 @@ private:
 	void sparsify_rrqr_only(Cluster*);
 
 	// Merge
-	void compute_new_edges(Cluster*, map<int, vector<int>>&);
+	void compute_new_edges(Cluster*);
+	void compute_new_edges_empty(Cluster*);
+
 
 	// Methods for solve
 	void QR_fwd(Cluster*) const;
@@ -118,10 +122,11 @@ public:
 
 	// Add new edge 
 	Edge* new_edgeOut(Cluster*, Cluster*);
-	Edge* new_edgeOutFillin(Cluster*, Cluster*);
+	Edge* new_edgeOut_empty(Cluster*, Cluster*);
 
 	void partition(SpMat& A);
 	void assemble(SpMat& A);
+	void get_sparsity(Cluster*);
 	int factorize();
 	void solve(Eigen::VectorXd b, Eigen::VectorXd& x) const;
 	~ParTree() {};
