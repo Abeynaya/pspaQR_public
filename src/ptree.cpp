@@ -615,11 +615,6 @@ void ParTree::partition(SpMat& A){
 
         this->interfaces[0].reserve(interfaces.size());
         this->interfaces[0].assign(make_move_iterator(interfaces.begin()), make_move_iterator(interfaces.end()));
-
-        // for (auto c: this->bottoms[0]){
-        //     cout << c->get_id() << endl;
-        // }
-
         assert(l==r);
     }
 
@@ -677,10 +672,6 @@ void ParTree::partition(SpMat& A){
 
         this->interfaces[lvl].reserve(interfaces.size()); 
         this->interfaces[lvl].assign(make_move_iterator(interfaces.begin()), make_move_iterator(interfaces.end()));
-        // for (auto c: this->bottoms[lvl]){
-        //     cout << my_rank << " " << c->get_id() << endl;
-        // }
-
     }
     auto t1 = systime();
     cout << "Time to partition: " << elapsed(t0, t1) << endl;
@@ -910,9 +901,7 @@ int ParTree::factorize(){
             Taskflow<pCluster2> fillin_empty_tf(&tp, verb);
             Taskflow<Cluster*> allocate_tf(&tp, verb);
 
-
-
-            Logger log(1000); 
+            Logger log(100); 
             if (this->ttor_log){
                 tp.set_logger(&log);
             }
@@ -997,7 +986,7 @@ int ParTree::factorize(){
             MPI_Barrier(MPI_COMM_WORLD);
             vend = systime();
 
-            cout << "time to fillin: " << elapsed(vstart, vend) << endl;
+            // cout << "time to fillin: " << elapsed(vstart, vend) << endl;
 
             auto log0 = systime();
             if (this->ttor_log){
@@ -1048,10 +1037,10 @@ int ParTree::factorize(){
             Taskflow<Cluster*> sparsify_rrqr_tf(&tp, verb);
             Taskflow<Edge*> sparsify_larfb_tf(&tp, verb);
 
-            double time_to_get =0;
-            double time_tot =0;
-            double time_store =0;
-            double time_satisfy =0;
+            // double time_to_get =0;
+            // double time_tot =0;
+            // double time_store =0;
+            // double time_satisfy =0;
 
 
 
@@ -1125,8 +1114,6 @@ int ParTree::factorize(){
                         for (auto& r: send_to ){
                             auto larfb_deps = view<int>(r.second.data(), r.second.size());
                             geqrt_2_larfb_am->send(r.first, U_view, T_view, larfb_deps, corder, crows, ccols);
-                            // send_U_large_am->send_large(r.first, U_view,larfb_deps, corder, crows, ccols);
-                            // send_T_large_am->send_large(r.first, T_view,larfb_deps, corder, crows, ccols);
                         }
                     }
 
@@ -1150,8 +1137,7 @@ int ParTree::factorize(){
                     return (e->n1->get_order() + e->n2->get_order())%ttor_threads;  
                 })
                 .set_indegree([&](EdgeIt eit){ // e->A21 = A_cn
-                    // if (cluster2rank((*eit)->n1) == cluster2rank((*eit)->n2)) return 1;
-                    return 1; // geqrt on e->n2 (2 messages)
+                    return 1; // geqrt on e->n2 
                 })
                 .set_task([&] (EdgeIt eit) {
                     larfb_edge(*eit);
@@ -1230,13 +1216,7 @@ int ParTree::factorize(){
 
             auto tsqrt_2_ssrfb_am = comm.make_active_msg(
                 [&] (view<double>& U_data, view<double>& T_data, view<int>& ssrfb_deps, int& c_order, int& n_order, int& n_rows, int& c_cols){
-                    auto t0 = systime();
                     Cluster* c = get_interior(c_order);
-                    auto t1 = systime();
-                    time_to_get += elapsed(t0,t1);
-
-                    // Cluster* n = get_interface(n_order); 
-
                     // Store the U and T matrices
                     auto eit_cn = find_if(c->edgesOut.begin(), c->edgesOut.end(), [&n_order](Edge* e){return e->n2->get_order() == n_order;});
                     assert(eit_cn != c->edgesOut.end());
@@ -1247,27 +1227,25 @@ int ParTree::factorize(){
                     int nb = min(32, c_cols);
                     MatrixXd Tmat = Map<MatrixXd>(T_data.data(), nb, c_cols);
                     c->set_T(n_order, Tmat);
-                    auto t3 = systime();
+                    // auto t3 = systime();
 
                     // Satisfy dependencies 
                     for (int& m_order: ssrfb_deps){
-                        auto t00 = systime();
+                        // auto t00 = systime();
 
                         Cluster* m = get_interface(m_order);
-                        auto t10 = systime();
-                        time_to_get += elapsed(t00,t10);
+                        // auto t10 = systime();
+                        // time_to_get += elapsed(t00,t10);
 
                         auto eit_mn = m->find_out_edge(n_order);
                         auto eit_mc = m->find_out_edge(c_order);
                         assert(cluster2rank(m)==my_rank);
                         ssrfb_tf.fulfill_promise({eit_cn, eit_mc, eit_mn}); // c->n, m->c, m->n
                     }
-                    auto t2 = systime();
-                    time_tot += elapsed(t0,t2);
-                    time_store += elapsed(t1,t3);
-                    time_satisfy += elapsed(t3,t2);
-
-
+                    // auto t2 = systime();
+                    // time_tot += elapsed(t0,t2);
+                    // time_store += elapsed(t1,t3);
+                    // time_satisfy += elapsed(t3,t2);
                 });
 
             tsqrt_tf.set_mapping([&] (EdgeIt eit){
@@ -1611,10 +1589,10 @@ int ParTree::factorize(){
             }
             auto log1 = systime();
 
-            cout << "Time to get: " << time_to_get << endl;
-            cout << "Time tot: " << time_tot << endl;
-            cout << "Time store: " << time_store << endl;
-            cout << "Time satisfy: " << time_satisfy << endl;
+            // cout << "Time to get: " << time_to_get << endl;
+            // cout << "Time tot: " << time_tot << endl;
+            // cout << "Time store: " << time_store << endl;
+            // cout << "Time satisfy: " << time_satisfy << endl;
 
 
 
@@ -1625,7 +1603,7 @@ int ParTree::factorize(){
         if (this->ilvl < nlevels-1)
         {
             {
-                auto mt0= systime();
+                // auto mt0= systime();
 
                 // Set all interiors to eliminated -- important to not interfere with the merging process
                 for (auto c: this->interiors_current()){
@@ -1690,12 +1668,12 @@ int ParTree::factorize(){
                 }
                 tp.join();
                 MPI_Barrier(MPI_COMM_WORLD);
-                auto mt1= systime();
-                cout << "Time to send merge: " << elapsed(mt0,mt1) <<endl;
+                // auto mt1= systime();
+                // cout << "Time to send merge: " << elapsed(mt0,mt1) <<endl;
 
             }
 
-            auto mt0= systime();
+            // auto mt0= systime();
             // Actual merge
             this->current_bottom++;
             // Update sizes -- sequential because we need a synch point after this and this is cheap anyway
@@ -1720,7 +1698,7 @@ int ParTree::factorize(){
             Taskflow<Cluster*> update_edges_tf(&tp, verb);
             Taskflow<Cluster*> update_edges_empty_tf(&tp, verb);
             
-            Logger log(1000); 
+            Logger log(100); 
             if (this->ttor_log){
                 tp.set_logger(&log);
             }
@@ -1778,8 +1756,8 @@ int ParTree::factorize(){
                 logfile.close();
             }
             auto log1 = systime();
-            auto mt1= systime();
-            cout << "Time to update edges: " << elapsed(mt0, mt1)<< endl;
+            // auto mt1= systime();
+            // cout << "Time to update edges: " << elapsed(mt0, mt1)<< endl;
 
         }
         mend = systime();
