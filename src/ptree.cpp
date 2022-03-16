@@ -674,7 +674,7 @@ void ParTree::partition(SpMat& A){
         this->interfaces[lvl].assign(make_move_iterator(interfaces.begin()), make_move_iterator(interfaces.end()));
     }
     auto t1 = systime();
-    cout << "Time to partition: " << elapsed(t0, t1) << endl;
+    if (my_rank == 0) cout << "Time to partition: " << elapsed(t0, t1) << endl;
 }
 
 void ParTree::assemble(SpMat& A){
@@ -820,7 +820,7 @@ void ParTree::assemble(SpMat& A){
     tp.join();
     MPI_Barrier(MPI_COMM_WORLD);
     auto tas1=systime();
-    cout << "assemble edges: " << elapsed(tas0,tas1) << endl;
+    // cout << "assemble edges: " << elapsed(tas0,tas1) << endl;
 
     auto td0= systime();
     // prepare fill-in
@@ -832,7 +832,7 @@ void ParTree::assemble(SpMat& A){
         SpMat AtA = App.transpose()*App; 
         AtA.makeCompressed();
         auto tata1 = systime();
-        cout << "ata: " << elapsed(tata0,tata1) << endl;
+        // cout << "ata: " << elapsed(tata0,tata1) << endl;
 
         for (auto self: bottom_original()){ // at the leaf level
             for (int col=self->get_cstart(); col < self->get_cstart()+self->cols(); ++col){
@@ -848,14 +848,14 @@ void ParTree::assemble(SpMat& A){
         } 
     }
     auto td1 = systime();
-    cout << "dist2: " << elapsed(td0,td1) << endl;
+    // cout << "dist2: " << elapsed(td0,td1) << endl;
 
     
     auto aend = systime();
-    // if (my_rank == 0){
+    if (my_rank == 0){
         cout << "Time to assemble: " << elapsed(astart, aend)  << endl;
         cout << "Aspect ratio of top separator: " << (double)get<0>(topsize())/(double)get<1>(topsize()) << endl;
-    // }
+    }
 }
 
 void ParTree::get_sparsity(Cluster* c){
