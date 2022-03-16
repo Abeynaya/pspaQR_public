@@ -12,7 +12,7 @@ LDFLAGS +=  -L$(BLASLIB)
 CFLAGS = -std=c++14 -Wall -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE 
 CFLAGS += -DTTOR_MPI
 ifdef DEBUG
-    CFLAGS += -g -Og -D_GLIBCXX_DEBUG -fsanitize=address -fsanitize=thread
+    CFLAGS += -g -Og -D_GLIBCXX_DEBUG -fsanitize=address
 else
     CFLAGS += -g -O3 -DEIGEN_NO_DEBUG -DNDEBUG -Wno-unused-variable 
     CFLAGS += -mtune=native -march=native -fomit-frame-pointer -funroll-loops -ffast-math 

@@ -56,11 +56,11 @@ class Tree{
         std::vector<ClusterID> cpermed; // Needed to be stored for pspaQR
 
         // Stores the clusters at each level of the cluster hierarchy
-        std::vector<std::list<Cluster*>> bottoms; // bottoms.size() = nlevels
-        std::vector<std::list<Cluster*>> interiors; //interiors.size() = nlevels
-        std::vector<std::list<Cluster*>> interfaces; // interfaces.size() = nlevels
-        std::vector<std::list<Cluster*>> interfaces2sparsify; // interfaces2sparsify.size() = nlevels
-        std::vector<std::list<Cluster*>> interfaces_no_sparsify; // interfaces_no_sparsify.size() = nlevels
+        std::vector<std::vector<Cluster*>> bottoms; // bottoms.size() = nlevels
+        std::vector<std::vector<Cluster*>> interiors; //interiors.size() = nlevels
+        std::vector<std::vector<Cluster*>> interfaces; // interfaces.size() = nlevels
+        // std::vector<std::list<Cluster*>> interfaces2sparsify; // interfaces2sparsify.size() = nlevels
+        // std::vector<std::list<Cluster*>> interfaces_no_sparsify; // interfaces_no_sparsify.size() = nlevels
 
         std::vector<std::list<Cluster*>> fine; // list of fine nodes
 
@@ -94,15 +94,13 @@ class Tree{
         void sparsify_extra_rows(Eigen::MatrixXd& C, int& rank, double& tol, bool rel = true);
         void sparsifyD_imp(Cluster* c);
 
-        const std::list<Cluster*>& clusters_at_lvl(int l) const {assert(l<nlevels); return bottoms[l];};
+        const std::vector<Cluster*>& clusters_at_lvl(int l) const {assert(l<nlevels); return bottoms[l];};
 
-        const std::list<Cluster*>& bottom_current() const {return bottoms[current_bottom];};
-        const std::list<Cluster*>& interiors_current() const {return interiors[current_bottom];};
-        const std::list<Cluster*>& interfaces_current() const {return interfaces[current_bottom];};
-        const std::list<Cluster*>& interfaces2sparsify_current() const {return interfaces2sparsify[current_bottom];};
-        const std::list<Cluster*>& interfaces_no_sparsify_current() const {return interfaces_no_sparsify[current_bottom];};
-
-        const std::list<Cluster*>& bottom_original() const {return bottoms[0];};
+        const int current_bottom_lvl() const {return current_bottom;};
+        const std::vector<Cluster*>& bottom_current() const {return bottoms[current_bottom];};
+        const std::vector<Cluster*>& interiors_current() const {return interiors[current_bottom];};
+        const std::vector<Cluster*>& interfaces_current() const {return interfaces[current_bottom];};
+        const std::vector<Cluster*>& bottom_original() const {return bottoms[0];};
 
         void split_edges(Cluster* c, Cluster* f);
         void diagScale(Cluster* c);
@@ -126,11 +124,11 @@ class Tree{
         Tree(int lvls, int skip_): ilvl(-1), nlevels(lvls), nrows(0), ncols(0), tol(0), 
                         use_matching(0), skip(skip_), scale(0), square(0), max_order(0), order(1), n_parts(pow(2,nlevels-1)),
                          current_bottom(0), nnzA(0), nnzR(0), nnzH(0), nnzQ(0) {
-                            bottoms = std::vector<std::list<Cluster*>>(nlevels);
-                            interiors = std::vector<std::list<Cluster*>>(nlevels);
-                            interfaces = std::vector<std::list<Cluster*>>(nlevels);
-                            interfaces2sparsify = std::vector<std::list<Cluster*>>(nlevels);
-                            interfaces_no_sparsify = std::vector<std::list<Cluster*>>(nlevels);
+                            bottoms = std::vector<std::vector<Cluster*>>(nlevels);
+                            interiors = std::vector<std::vector<Cluster*>>(nlevels);
+                            interfaces = std::vector<std::vector<Cluster*>>(nlevels);
+                            // interfaces2sparsify = std::vector<std::list<Cluster*>>(nlevels);
+                            // interfaces_no_sparsify = std::vector<std::list<Cluster*>>(nlevels);
                             fine = std::vector<std::list<Cluster*>>(nlevels);
                             Xcoo = nullptr;
                             profile = Profile(lvls, skip_);

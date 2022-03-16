@@ -667,45 +667,50 @@ void Tree::partition(SpMat& A){
         #endif
     }
    
-    /* Set the initial clusters: lvl 0 in cluster heirarchy */
-    int k=0;
-    int l=0;
-    for (; k < c;){
-        int knext = k+1;
-        ClusterID cid = cpermed[k];
-        int nr2c = c2r_count[k];
+    {
+        /* Set the initial clusters: lvl 0 in cluster heirarchy */
+        list<Cluster*> interiors;
+        list<Cluster*> interfaces;
+        list<Cluster*> clusters_all;
 
-        while(knext < c && cid == cpermed[knext]){
-            nr2c += c2r_count[knext];
-            knext++;
-        }
 
-        assert(nr2c != 0);
-        Cluster* self = new Cluster(k, knext-k, l, nr2c, cid, get_new_order(),0);
-        this->bottoms[0].push_back(self);
-        if (cid.level()==0) {
-            interiors[0].push_back(self);
-        }
-        else {
-            interfaces[0].push_back(self);
-        }
-        // To sparsify?
-        if (cid.level()>0 && cid.left().level()<=0 && cid.right().level()<=0){
-            interfaces2sparsify[0].push_back(self);
-        }
-        else if (cid.level()>0){
-            interfaces_no_sparsify[0].push_back(self);
-        }
+        int k=0;
+        int l=0;
+        for (; k < c;){
+            int knext = k+1;
+            ClusterID cid = cpermed[k];
+            int nr2c = c2r_count[k];
 
-        k = knext; 
-        l += nr2c;
+            while(knext < c && cid == cpermed[knext]){
+                nr2c += c2r_count[knext];
+                knext++;
+            }
+
+            assert(nr2c != 0);
+            Cluster* self = new Cluster(k, knext-k, l, nr2c, cid, get_new_order(),0);
+            clusters_all.push_back(self);
+            if (cid.level()==0) {
+                interiors.push_back(self);
+            }
+            else {
+                interfaces.push_back(self);
+            }
+            k = knext; 
+            l += nr2c;
+        }
+        this->bottoms[0].reserve(clusters_all.size()); copy(clusters_all.begin(), clusters_all.end(), this->bottoms[0].begin());
+        this->interiors[0].reserve(interiors.size()); copy(interiors.begin(), interiors.end(), this->interiors[0].begin());
+        this->interfaces[0].reserve(interfaces.size()); copy(interfaces.begin(), interfaces.end(), this->interfaces[0].begin());
+
+
+        assert(l==r);
     }
-
-    assert(l==r);
-
 
     /* Set parent and children and build the cluster heirarchy */
     for (int lvl=1; lvl < nlevels; ++lvl){
+        list<Cluster*> interiors;
+        list<Cluster*> interfaces;
+        list<Cluster*> clusters_all;
         auto begin = find_if(bottoms[lvl-1].begin(), bottoms[lvl-1].end(), [lvl](const Cluster* s){return s->lvl() >= lvl;});
         auto end = bottoms[lvl-1].end();
 
@@ -736,22 +741,20 @@ void Tree::partition(SpMat& A){
                 c->set_parent(parent); 
                 parent->add_children(c);
             }
+            parent->sort_children(); // I don't know why the order of children are NOT the same in different nodes -- so this is necessary
 
-            bottoms[lvl].push_back(parent);
+            clusters_all.push_back(parent);
             if (idparent.level()== lvl) {
-                interiors[lvl].push_back(parent);
+                interiors.push_back(parent);
             }
             else {
-                interfaces[lvl].push_back(parent);
-            }
-            // To sparsify?
-            if (idparent.level()>lvl && idparent.left().level()<=lvl && idparent.right().level()<=lvl){
-                interfaces2sparsify[lvl].push_back(parent);
-            }
-            else if (idparent.level()>lvl) {
-                interfaces_no_sparsify[lvl].push_back(parent);
+                interfaces.push_back(parent);
             }
         }
+        // Copy to data structures in the tree
+        this->bottoms[lvl].reserve(clusters_all.size()); copy(clusters_all.begin(), clusters_all.end(), this->bottoms[lvl].begin());
+        this->interiors[lvl].reserve(interiors.size()); copy(interiors.begin(), interiors.end(), this->interiors[lvl].begin());
+        this->interfaces[lvl].reserve(interfaces.size()); copy(interfaces.begin(), interfaces.end(), this->interfaces[lvl].begin());
     }
     auto t1 = systime();
     cout << "Time to partition: " << elapsed(t0, t1) << endl;

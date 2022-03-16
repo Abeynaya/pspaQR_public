@@ -147,10 +147,10 @@ EdgeIt Cluster::find_out_edge(int n_order) {
 }
 
 /*Elimination*/
-void Cluster::set_T(Eigen::MatrixXd& T_) {
-    this->T = new Eigen::MatrixXd(0,0);
-    *(this->T) = T_;
-}
+// void Cluster::set_T(Eigen::MatrixXd& T_) {
+//     this->T = new Eigen::MatrixXd(0,0);
+//     *(this->T) = T_;
+// }
 void Cluster::create_T(int norder) {
     this->Tmap[norder] = new Eigen::MatrixXd(0,0);
 }
