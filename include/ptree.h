@@ -52,6 +52,7 @@ struct std::hash<EdgeIt>
     }
 };
 
+
 class ParTree: public Tree
 {
 private:

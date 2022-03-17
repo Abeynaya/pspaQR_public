@@ -902,7 +902,7 @@ int Tree::eliminate_cluster(Cluster* c){
 
 // New version of get_sparsity that uses edgesIn -- Feb 10, 2022
 void Tree::get_sparsity(Cluster* c){
-    set<Cluster*> row_sparsity;
+    unordered_set<Cluster*> row_sparsity;
     row_sparsity.insert(c->dist2connxs.begin(), c->dist2connxs.end());
     for (auto edge: c->edgesIn){
         row_sparsity.insert(edge->n1);

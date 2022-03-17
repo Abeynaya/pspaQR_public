@@ -333,6 +333,7 @@ void ParTree::scale_cluster(Cluster* c){
 
 /* Merge */
 void ParTree::compute_new_edges(Cluster* snew){
+    // auto t0 = systime();
     set<Cluster*> edges_merged;
     set<Cluster*> snew_cnbrs;
     for (auto sold: snew->children){
@@ -379,6 +380,8 @@ void ParTree::compute_new_edges(Cluster* snew){
             
         }
     }
+    // auto t1 = systime();
+    // time_update_edges += elapsed(t0,t1);
 }
 
 void ParTree::compute_new_edges_empty(Cluster* snew){
@@ -828,27 +831,29 @@ void ParTree::assemble(SpMat& A){
     // So do tp.join() before
     { // ONLY original distance two connections
         // On ALL RANKS FOR ALL CLUSTERS
-        auto tata0 = systime();
         SpMat AtA = App.transpose()*App; 
         AtA.makeCompressed();
-        auto tata1 = systime();
-        // cout << "ata: " << elapsed(tata0,tata1) << endl;
+        vector<bool> visited(r,false);
 
         for (auto self: bottom_original()){ // at the leaf level
             for (int col=self->get_cstart(); col < self->get_cstart()+self->cols(); ++col){
                 for (SpMat::InnerIterator it(AtA,col); it; ++it){
-                    int row = it.row();
-                    Cluster* possible_nbr = cmap[row];
-                    if (possible_nbr->lvl()>= self->lvl() && possible_nbr != self) self->dist2connxs.insert(possible_nbr);
-                    else if (possible_nbr->lvl() < self->lvl()) {
-                        self->dist2connxs.insert(possible_nbr->dist2connxs.begin(), possible_nbr->dist2connxs.end());
+                    int row = it.row(); 
+                    if (!visited[row]){
+                        Cluster* possible_nbr = cmap[row];
+                        if (possible_nbr->lvl()>= self->lvl() && possible_nbr != self) self->dist2connxs.insert(possible_nbr);
+                        else if (possible_nbr->lvl() < self->lvl()) {
+                            self->dist2connxs.insert(possible_nbr->dist2connxs.begin(), possible_nbr->dist2connxs.end());
+                        } 
+                        visited[row] = true;
                     }
                 }
             }
+            fill(visited.begin(), visited.end(), false);
         } 
     }
     auto td1 = systime();
-    // cout << "dist2: " << elapsed(td0,td1) << endl;
+    if(my_rank==0)cout << "dist2: " << elapsed(td0,td1) << endl;
 
     
     auto aend = systime();
@@ -859,12 +864,12 @@ void ParTree::assemble(SpMat& A){
 }
 
 void ParTree::get_sparsity(Cluster* c){
-    set<Cluster*> row_sparsity;
-    row_sparsity.insert(c->dist2connxs.begin(), c->dist2connxs.end());
+    // unordered_set<Cluster*> row_sparsity;
+    c->rsparsity.insert(c->dist2connxs.begin(), c->dist2connxs.end());
     for (auto edge: c->edgesIn){
-        row_sparsity.insert(edge->n1);
+        c->rsparsity.insert(edge->n1);
     }
-    c->rsparsity = row_sparsity;
+    // c->rsparsity = row_sparsity;
 
     // for (auto& rn: row_sparsity){
     //     if (cluster2rank(rn) == my_rank) continue; 
@@ -1594,8 +1599,6 @@ int ParTree::factorize(){
             // cout << "Time store: " << time_store << endl;
             // cout << "Time satisfy: " << time_satisfy << endl;
 
-
-
         }
 
         // Merge
@@ -1603,7 +1606,7 @@ int ParTree::factorize(){
         if (this->ilvl < nlevels-1)
         {
             {
-                // auto mt0= systime();
+                auto mt0= systime();
 
                 // Set all interiors to eliminated -- important to not interfere with the merging process
                 for (auto c: this->interiors_current()){
@@ -1668,12 +1671,13 @@ int ParTree::factorize(){
                 }
                 tp.join();
                 MPI_Barrier(MPI_COMM_WORLD);
-                // auto mt1= systime();
+                auto mt1= systime();
                 // cout << "Time to send merge: " << elapsed(mt0,mt1) <<endl;
 
             }
 
-            // auto mt0= systime();
+            auto mt0= systime();
+            double time_dist2 =0;
             // Actual merge
             this->current_bottom++;
             // Update sizes -- sequential because we need a synch point after this and this is cheap anyway
@@ -1686,11 +1690,22 @@ int ParTree::factorize(){
                         sold->cposparent = csize;
                         rsize += sold->rows();
                         csize += sold->cols();
+                        auto t00 = systime();
                         for (auto d2c: sold->dist2connxs) if(d2c->lvl() >= this->current_bottom) snew->dist2connxs.insert(d2c->get_parent());
+                        auto t01 = systime();
+                        time_dist2 += elapsed(t00,t01);
                     }
                     snew->set_size(rsize, csize); 
                     snew->set_org(rsize, csize);
             }
+
+            auto mt01= systime();
+            if (my_rank==0){
+                cout << "Time to update size: " << elapsed(mt0, mt01) << endl;
+                cout << "Time to dist2: " << time_dist2 << endl;
+            }
+            
+
 
             // Update edges
             Communicator comm(MPI_COMM_WORLD);
@@ -1756,8 +1771,8 @@ int ParTree::factorize(){
                 logfile.close();
             }
             auto log1 = systime();
-            // auto mt1= systime();
-            // cout << "Time to update edges: " << elapsed(mt0, mt1)<< endl;
+            auto mt1= systime();
+            if (my_rank==0) cout << "Time to update edges: " << elapsed(mt0, mt1)<< endl;
 
         }
         mend = systime();

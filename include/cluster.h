@@ -9,16 +9,26 @@
 #include <set>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 #include <assert.h>
 #include <mutex>
 #include "util.h"
 
 typedef Eigen::SparseMatrix<double, 0, int> SpMat;
 struct Edge;
-
+// struct Cluster;
 typedef std::list<Edge*>::iterator EdgeIt;
 
-
+// template<>
+// struct std::hash<Cluster*>
+// {
+//     std::size_t operator()(Cluster* const& c) const noexcept
+//     {
+//         std::size_t seed = 0;
+//         hash_combine(seed,c->get_order());
+//         return seed;
+//     }
+// };
 /*Separator ID: gives level and separator index
   in that level
 */
@@ -182,8 +192,8 @@ public:
     int rposparent; // row position in the parent
     int cposparent; // column position in the parent
     std::list<Cluster*> children; // make it a list because order matters in pspaQR (may not really matter)
-    std::set<Cluster*> rsparsity; 
-    std::set<Cluster*> dist2connxs; 
+    std::unordered_set<Cluster*> rsparsity; 
+    std::unordered_set<Cluster*> dist2connxs; 
 
 
     std::set<Cluster*> cnbrs; // neigbors including self
