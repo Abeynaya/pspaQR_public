@@ -336,8 +336,8 @@ void ParTree::compute_new_edges(Cluster* snew){
     // auto t0 = systime();
     set<Cluster*> edges_merged;
     set<Cluster*> snew_cnbrs;
-    for (auto& sold: snew->children){
-        for (auto& eold : sold->edgesOut){
+    for (auto sold: snew->children){
+        for (auto eold : sold->edgesOut){
             auto n = eold->n2; 
             if (!(n->is_eliminated())){
                 assert(n->get_parent() != nullptr);
@@ -348,7 +348,7 @@ void ParTree::compute_new_edges(Cluster* snew){
         for (auto d2c: sold->dist2connxs) if(d2c->lvl() >= this->current_bottom) snew->dist2connxs.insert(d2c->get_parent());
     }
     // Allocate memory and create new edges
-    for (auto& n: snew_cnbrs){
+    for (auto n: snew_cnbrs){
         Edge* e = new_edgeOut(snew, n);
         if (snew==n) snew->add_self_edge(e);
     }
@@ -357,8 +357,8 @@ void ParTree::compute_new_edges(Cluster* snew){
     snew->sort_edgesOut();
 
     // Fill edges, delete previous edges
-    for (auto& sold: snew->children){
-        for (auto& eold: sold->edgesOut){
+    for (auto sold: snew->children){
+        for (auto eold: sold->edgesOut){
             auto nold = eold->n2;
 
             if (!(nold->is_eliminated())){
@@ -388,8 +388,8 @@ void ParTree::compute_new_edges(Cluster* snew){
 void ParTree::compute_new_edges_empty(Cluster* snew){
     set<Cluster*> edges_merged;
     set<Cluster*> snew_cnbrs;
-    for (auto& sold: snew->children){
-        for (auto& eold : sold->edgesOut){
+    for (auto sold: snew->children){
+        for (auto eold : sold->edgesOut){
             auto n = eold->n2; 
             if (!(n->is_eliminated())){
                 assert(n->get_parent() != nullptr);
@@ -399,7 +399,7 @@ void ParTree::compute_new_edges_empty(Cluster* snew){
         for (auto d2c: sold->dist2connxs) if(d2c->lvl() >= this->current_bottom) snew->dist2connxs.insert(d2c->get_parent());
     }
     // Allocate memory and create new edges
-    for (auto& n: snew_cnbrs){
+    for (auto n: snew_cnbrs){
         Edge* e = new_edgeOut_empty(snew, n);
         if (snew==n) snew->add_self_edge(e);
     }
