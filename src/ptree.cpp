@@ -334,14 +334,12 @@ void ParTree::scale_cluster(Cluster* c){
 /* Merge */
 void ParTree::compute_new_edges(Cluster* snew){
     // auto t0 = systime();
-    set<Cluster*> edges_merged;
-    set<Cluster*> snew_cnbrs;
+    unordered_set<Cluster*> snew_cnbrs;
     for (auto sold: snew->children){
         for (auto eold : sold->edgesOut){
             auto n = eold->n2; 
             if (!(n->is_eliminated())){
                 assert(n->get_parent() != nullptr);
-                // assert(!(n->get_parent()->is_eliminated()));
                 snew_cnbrs.insert(n->get_parent());
             }
         }
@@ -386,8 +384,7 @@ void ParTree::compute_new_edges(Cluster* snew){
 }
 
 void ParTree::compute_new_edges_empty(Cluster* snew){
-    set<Cluster*> edges_merged;
-    set<Cluster*> snew_cnbrs;
+    unordered_set<Cluster*> snew_cnbrs;
     for (auto sold: snew->children){
         for (auto eold : sold->edgesOut){
             auto n = eold->n2; 
