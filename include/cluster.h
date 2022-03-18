@@ -193,10 +193,7 @@ public:
     int cposparent; // column position in the parent
     std::list<Cluster*> children; // make it a list because order matters in pspaQR (may not really matter)
     std::unordered_set<Cluster*> rsparsity; 
-    // std::unordered_set<Cluster*> dist2connxs; 
-    std::list<Cluster*> dist2connxs; 
-
-
+    std::unordered_set<Cluster*> dist2connxs; 
 
     std::set<Cluster*> cnbrs; // neigbors including self
     std::set<Cluster*> rnbrs; // neigbors including self

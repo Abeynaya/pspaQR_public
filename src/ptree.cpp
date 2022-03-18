@@ -345,6 +345,7 @@ void ParTree::compute_new_edges(Cluster* snew){
                 snew_cnbrs.insert(n->get_parent());
             }
         }
+        for (auto d2c: sold->dist2connxs) if(d2c->lvl() >= this->current_bottom) snew->dist2connxs.insert(d2c->get_parent());
     }
     // Allocate memory and create new edges
     for (auto& n: snew_cnbrs){
@@ -395,6 +396,7 @@ void ParTree::compute_new_edges_empty(Cluster* snew){
                 snew_cnbrs.insert(n->get_parent());
             }
         }
+        for (auto d2c: sold->dist2connxs) if(d2c->lvl() >= this->current_bottom) snew->dist2connxs.insert(d2c->get_parent());
     }
     // Allocate memory and create new edges
     for (auto& n: snew_cnbrs){
@@ -840,29 +842,13 @@ void ParTree::assemble(SpMat& A){
                 for (SpMat::InnerIterator it(AtA,col); it; ++it){
                     int row = it.row(); 
                     Cluster* possible_nbr = cmap[row];
-                    if (possible_nbr->lvl()>= self->lvl() && possible_nbr != self && !visited[possible_nbr->get_order()]){
-                        self->dist2connxs.push_back(possible_nbr);
+                    if (!visited[possible_nbr->get_order()]){
+                        if (possible_nbr->lvl()>= self->lvl() && possible_nbr != self) self->dist2connxs.insert(possible_nbr);
+                        else if (possible_nbr->lvl() < self->lvl()) {
+                            self->dist2connxs.insert(possible_nbr->dist2connxs.begin(), possible_nbr->dist2connxs.end());
+                        } 
                         visited[possible_nbr->get_order()] = true;
                     }
-                    else if (possible_nbr->lvl() < self->lvl()){
-                        for (auto& n: possible_nbr->dist2connxs){
-                            if (!visited[n->get_order()]) {
-                                self->dist2connxs.push_back(n);
-                                visited[n->get_order()]=true;
-                            }
-                        }
-                    }
-
-                    // if (!visited[possible_nbr->get_order()]){
-                    //     if (possible_nbr->lvl()>= self->lvl() && possible_nbr != self) self->dist2connxs.push_back(possible_nbr);
-                    //     else if (possible_nbr->lvl() < self->lvl()) {
-                    //         for (auto& n: possible_nbr->dist2connxs){
-                    //             if (!visited[n->get_order()]) self->dist2connxs.push_back(n);
-                    //         }
-                    //         // self->dist2connxs.insert(possible_nbr->dist2connxs.begin(), possible_nbr->dist2connxs.end());
-                    //     } 
-                    //     visited[possible_nbr->get_order()] = true;
-                    // }
                 }
             }
             fill(visited.begin(), visited.end(), false);
@@ -1682,57 +1668,30 @@ int ParTree::factorize(){
             }
 
             auto mt0= systime();
-            double time_dist2 =0;
-            
             // Actual merge
             this->current_bottom++;
             // Update sizes -- sequential because we need a synch point after this and this is cheap anyway
-            vector<int> visited(this->bottom_current().size(),0);
-            int start_idx = this->bottom_current()[0]->get_order();
-            for (auto& snew: this->bottom_current()){
-                int rsize = 0;
-                int csize = 0;
-                // list<Cluster*> temp_vec;
-                for (auto& sold: snew->children){
-                    sold->rposparent = rsize;
-                    sold->cposparent = csize;
-                    rsize += sold->rows();
-                    csize += sold->cols();
-                    // auto t00 = systime();
-                    // for (auto& d2c: sold->dist2connxs) if(d2c->lvl() >= this->current_bottom) snew->dist2connxs.insert(d2c->get_parent());
-                    // auto t01 = systime();
-                    // time_dist2 += elapsed(t00,t01);
-                    auto t10 = systime();
-                    
-                    // vector<Cluster*> temp2(sold->dist2connxs.begin(), sold->dist2connxs.end());
-                    for (auto& d2c: sold->dist2connxs) {
-                        if(d2c->lvl() >= this->current_bottom){
-                            int position = d2c->get_parent()->get_order()-start_idx;
-                            if(visited[position] == 0) {
-                                visited[position]=1;
-                                snew->dist2connxs.push_back(d2c->get_parent());
-                            } 
-                        }
+            for (auto snew: this->bottom_current()){
+                // if (cluster2rank(snew) == my_rank){ // Need to be done in all ranks
+                    int rsize = 0;
+                    int csize = 0;
+                    for (auto sold: snew->children){
+                        sold->rposparent = rsize;
+                        sold->cposparent = csize;
+                        rsize += sold->rows();
+                        csize += sold->cols();
+                        // auto t00 = systime();
+                        // for (auto d2c: sold->dist2connxs) if(d2c->lvl() >= this->current_bottom) snew->dist2connxs.insert(d2c->get_parent());
+                        // auto t01 = systime();
+                        // time_dist2 += elapsed(t00,t01);
                     }
-                    auto t11 = systime();
-                    would_be_time += elapsed(t10, t11);
                 }
                 snew->set_size(rsize, csize); 
                 snew->set_org(rsize, csize);
-                // copy to vector
-                auto t10 = systime();
-                fill(visited.begin(), visited.end(), 0);
-                auto t11 = systime();
-                time_dist2 += elapsed(t10, t11);
             }
-
-
             auto mt01= systime();
             if (my_rank==0){
                 cout << "Time to update size: " << elapsed(mt0, mt01) << endl;
-                cout << "Time to dist2: " << time_dist2 << endl;
-                // cout << "Would be time: " << would_be_time << endl;
-
             }
             
 

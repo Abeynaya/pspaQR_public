@@ -416,30 +416,13 @@ void Tree::reassign_rows(Cluster* c){
 void Tree::update_size(Cluster* snew){
     int rsize = 0;
     int csize = 0;
-    vector<int> visited(this->bottom_current().size(),0);
-    int start_idx = this->bottom_current()[0]->get_order();
-    for (auto& snew: this->bottom_current()){
-        int rsize = 0;
-        int csize = 0;
-        // list<Cluster*> temp_vec;
-        for (auto& sold: snew->children){
-            sold->rposparent = rsize;
-            sold->cposparent = csize;
-            rsize += sold->rows();
-            csize += sold->cols();
-            
-            // vector<Cluster*> temp2(sold->dist2connxs.begin(), sold->dist2connxs.end());
-            for (auto& d2c: sold->dist2connxs) {
-                if(d2c->lvl() >= this->current_bottom){
-                    int position = d2c->get_parent()->get_order()-start_idx;
-                    if(visited[position] == 0) {
-                        visited[position]=1;
-                        snew->dist2connxs.push_back(d2c->get_parent());
-                    } 
-                }
-            }
-        }
-        fill(visited.begin(), visited.end(), 0);
+    
+    for (auto& sold: snew->children){
+        sold->rposparent = rsize;
+        sold->cposparent = csize;
+        rsize += sold->rows();
+        csize += sold->cols();
+        for (auto d2c: sold->dist2connxs) if(d2c->lvl() >= this->current_bottom) snew->dist2connxs.insert(d2c->get_parent());
     }
     snew->set_size(rsize, csize); 
     snew->set_org(rsize, csize);
@@ -842,22 +825,6 @@ void Tree::assemble(SpMat& A){
     }
 
     // prepare fill-in
-    // { // ONLY original distance two connections
-    //     SpMat AtA = App.transpose()*App; 
-    //     for (auto self: bottom_original()){ // at the leaf level
-    //         for (int col=self->get_cstart(); col < self->get_cstart()+self->cols(); ++col){
-    //             for (SpMat::InnerIterator it(AtA,col); it; ++it){
-    //                 int row = it.row();
-    //                 Cluster* possible_nbr = cmap[row];
-    //                 if (possible_nbr->lvl()>= self->lvl() && possible_nbr != self) self->dist2connxs.insert(possible_nbr);
-    //                 else if (possible_nbr->lvl() < self->lvl()) {
-    //                     self->dist2connxs.insert(possible_nbr->dist2connxs.begin(), possible_nbr->dist2connxs.end());
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
-
     { // ONLY original distance two connections
         // On ALL RANKS FOR ALL CLUSTERS
         SpMat AtA = App.transpose()*App; 
@@ -869,23 +836,20 @@ void Tree::assemble(SpMat& A){
                 for (SpMat::InnerIterator it(AtA,col); it; ++it){
                     int row = it.row(); 
                     Cluster* possible_nbr = cmap[row];
-                    if (possible_nbr->lvl()>= self->lvl() && possible_nbr != self && !visited[possible_nbr->get_order()]){
-                        self->dist2connxs.push_back(possible_nbr);
+                    if (!visited[possible_nbr->get_order()]){
+                        if (possible_nbr->lvl()>= self->lvl() && possible_nbr != self) self->dist2connxs.insert(possible_nbr);
+                        else if (possible_nbr->lvl() < self->lvl()) {
+                            self->dist2connxs.insert(possible_nbr->dist2connxs.begin(), possible_nbr->dist2connxs.end());
+                        } 
                         visited[possible_nbr->get_order()] = true;
-                    }
-                    else if (possible_nbr->lvl() < self->lvl()){
-                        for (auto& n: possible_nbr->dist2connxs){
-                            if (!visited[n->get_order()]) {
-                                self->dist2connxs.push_back(n);
-                                visited[n->get_order()]=true;
-                            }
-                        }
                     }
                 }
             }
             fill(visited.begin(), visited.end(), false);
         } 
     }
+
+    
     auto aend = systime();
     cout << "Time to assemble: " << elapsed(astart, aend)  << endl;
     cout << "Aspect ratio of top separator: " << (double)get<0>(topsize())/(double)get<1>(topsize()) << endl;
