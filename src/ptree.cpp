@@ -1678,9 +1678,12 @@ int ParTree::factorize(){
 
             auto mt0= systime();
             double time_dist2 =0;
+            double would_be_time = 0;
             // Actual merge
             this->current_bottom++;
             // Update sizes -- sequential because we need a synch point after this and this is cheap anyway
+            vector<int> possible_connx(this->bottom_current().size(),0);
+            int start_idx = this->bottom_current()[0]->get_order();
             for (auto snew: this->bottom_current()){
                 // if (cluster2rank(snew) == my_rank){ // Need to be done in all ranks
                     int rsize = 0;
@@ -1694,15 +1697,35 @@ int ParTree::factorize(){
                         for (auto d2c: sold->dist2connxs) if(d2c->lvl() >= this->current_bottom) snew->dist2connxs.insert(d2c->get_parent());
                         auto t01 = systime();
                         time_dist2 += elapsed(t00,t01);
+                        vector<Cluster*> temp2(sold->dist2connxs.begin(), sold->dist2connxs.end());
+                        // temp2 = cop(sold->dist2connxs.begin(), sold->dist2connxs.end());
+                        auto t10 = systime();
+                        for (auto d2c: temp2) {
+                            if(d2c->lvl() >= this->current_bottom) possible_connx[d2c->get_parent()->get_order()-start_idx]=1;
+                        }
+                        auto t11 = systime();
+                        would_be_time += elapsed(t10, t11);
                     }
                     snew->set_size(rsize, csize); 
                     snew->set_org(rsize, csize);
+                    // copy to vector
+                    auto t10 = systime();
+                    vector<Cluster*> temp_vec(accumulate(possible_connx.begin(),possible_connx.end(),0));
+                    for (int i=0; i< possible_connx.size(); ++i){
+                        if(possible_connx[i]!=0) temp_vec.push_back(get_cluster(i+start_idx)); 
+                    }
+                    fill(possible_connx.begin(), possible_connx.end(), 0);
+
+                    auto t11 = systime();
+                    would_be_time += elapsed(t10, t11);
             }
 
             auto mt01= systime();
             if (my_rank==0){
                 cout << "Time to update size: " << elapsed(mt0, mt01) << endl;
                 cout << "Time to dist2: " << time_dist2 << endl;
+                cout << "Would be time: " << would_be_time << endl;
+
             }
             
 
