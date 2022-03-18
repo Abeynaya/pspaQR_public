@@ -1697,11 +1697,16 @@ int ParTree::factorize(){
                         for (auto d2c: sold->dist2connxs) if(d2c->lvl() >= this->current_bottom) snew->dist2connxs.insert(d2c->get_parent());
                         auto t01 = systime();
                         time_dist2 += elapsed(t00,t01);
-                        vector<Cluster*> temp2(sold->dist2connxs.begin(), sold->dist2connxs.end());
-                        // temp2 = cop(sold->dist2connxs.begin(), sold->dist2connxs.end());
                         auto t10 = systime();
+                        
+                        vector<Cluster*> temp2(sold->dist2connxs.begin(), sold->dist2connxs.end());
+                        list<Cluster*> temp_vec;
                         for (auto d2c: temp2) {
-                            if(d2c->lvl() >= this->current_bottom) possible_connx[d2c->get_parent()->get_order()-start_idx]=1;
+                            int position = d2c->get_parent()->get_order()-start_idx;
+                            if(d2c->lvl() >= this->current_bottom && possible_connx[position] == 0) {
+                                possible_connx[position]=1;
+                                temp_vec.push_back(d2c->get_parent());
+                            }
                         }
                         auto t11 = systime();
                         would_be_time += elapsed(t10, t11);
@@ -1710,12 +1715,7 @@ int ParTree::factorize(){
                     snew->set_org(rsize, csize);
                     // copy to vector
                     auto t10 = systime();
-                    vector<Cluster*> temp_vec(accumulate(possible_connx.begin(),possible_connx.end(),0));
-                    for (int i=0; i< possible_connx.size(); ++i){
-                        if(possible_connx[i]!=0) temp_vec.push_back(get_cluster(i+start_idx)); 
-                    }
                     fill(possible_connx.begin(), possible_connx.end(), 0);
-
                     auto t11 = systime();
                     would_be_time += elapsed(t10, t11);
             }
