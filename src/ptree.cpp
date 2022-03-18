@@ -1673,18 +1673,17 @@ int ParTree::factorize(){
             // Update sizes -- sequential because we need a synch point after this and this is cheap anyway
             for (auto snew: this->bottom_current()){
                 // if (cluster2rank(snew) == my_rank){ // Need to be done in all ranks
-                    int rsize = 0;
-                    int csize = 0;
-                    for (auto sold: snew->children){
-                        sold->rposparent = rsize;
-                        sold->cposparent = csize;
-                        rsize += sold->rows();
-                        csize += sold->cols();
-                        // auto t00 = systime();
-                        // for (auto d2c: sold->dist2connxs) if(d2c->lvl() >= this->current_bottom) snew->dist2connxs.insert(d2c->get_parent());
-                        // auto t01 = systime();
-                        // time_dist2 += elapsed(t00,t01);
-                    }
+                int rsize = 0;
+                int csize = 0;
+                for (auto sold: snew->children){
+                    sold->rposparent = rsize;
+                    sold->cposparent = csize;
+                    rsize += sold->rows();
+                    csize += sold->cols();
+                    // auto t00 = systime();
+                    // for (auto d2c: sold->dist2connxs) if(d2c->lvl() >= this->current_bottom) snew->dist2connxs.insert(d2c->get_parent());
+                    // auto t01 = systime();
+                    // time_dist2 += elapsed(t00,t01);
                 }
                 snew->set_size(rsize, csize); 
                 snew->set_org(rsize, csize);
