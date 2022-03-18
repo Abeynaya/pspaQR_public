@@ -345,6 +345,7 @@ void ParTree::compute_new_edges(Cluster* snew){
                 snew_cnbrs.insert(n->get_parent());
             }
         }
+        for (auto d2c: sold->dist2connxs) if(d2c->lvl() >= this->current_bottom) snew->dist2connxs.insert(d2c->get_parent());
     }
     // Allocate memory and create new edges
     for (auto n: snew_cnbrs){
@@ -395,6 +396,7 @@ void ParTree::compute_new_edges_empty(Cluster* snew){
                 snew_cnbrs.insert(n->get_parent());
             }
         }
+        for (auto d2c: sold->dist2connxs) if(d2c->lvl() >= this->current_bottom) snew->dist2connxs.insert(d2c->get_parent());
     }
     // Allocate memory and create new edges
     for (auto n: snew_cnbrs){
@@ -833,19 +835,19 @@ void ParTree::assemble(SpMat& A){
         // On ALL RANKS FOR ALL CLUSTERS
         SpMat AtA = App.transpose()*App; 
         AtA.makeCompressed();
-        vector<bool> visited(r,false);
+        vector<bool> visited(this->bottoms[0].size(),false);
 
         for (auto self: bottom_original()){ // at the leaf level
             for (int col=self->get_cstart(); col < self->get_cstart()+self->cols(); ++col){
                 for (SpMat::InnerIterator it(AtA,col); it; ++it){
                     int row = it.row(); 
-                    if (!visited[row]){
-                        Cluster* possible_nbr = cmap[row];
+                    Cluster* possible_nbr = cmap[row];
+                    if (!visited[possible_nbr->get_order()]){
                         if (possible_nbr->lvl()>= self->lvl() && possible_nbr != self) self->dist2connxs.insert(possible_nbr);
                         else if (possible_nbr->lvl() < self->lvl()) {
                             self->dist2connxs.insert(possible_nbr->dist2connxs.begin(), possible_nbr->dist2connxs.end());
                         } 
-                        visited[row] = true;
+                        visited[possible_nbr->get_order()] = true;
                     }
                 }
             }
@@ -864,21 +866,10 @@ void ParTree::assemble(SpMat& A){
 }
 
 void ParTree::get_sparsity(Cluster* c){
-    // unordered_set<Cluster*> row_sparsity;
     c->rsparsity.insert(c->dist2connxs.begin(), c->dist2connxs.end());
     for (auto edge: c->edgesIn){
         c->rsparsity.insert(edge->n1);
     }
-    // c->rsparsity = row_sparsity;
-
-    // for (auto& rn: row_sparsity){
-    //     if (cluster2rank(rn) == my_rank) continue; 
-    //     auto found_in = find_if(c->edgesIn.begin(), c->edgesIn.end(), [&rn](Edge* e){return e->n1 == rn;});
-    //     if (found_in == c->edgesIn.end()){
-    //         bool is_spars_nbr = false;
-    //         c->add_edgeIn(new Edge(rn, c), is_spars_nbr); // doesn't need lock
-    //     }
-    // }
 }
 
 int ParTree::factorize(){
@@ -1677,7 +1668,7 @@ int ParTree::factorize(){
             }
 
             auto mt0= systime();
-            double time_dist2 =0;
+            // double time_dist2 =0;
             // Actual merge
             this->current_bottom++;
             // Update sizes -- sequential because we need a synch point after this and this is cheap anyway
@@ -1690,10 +1681,10 @@ int ParTree::factorize(){
                         sold->cposparent = csize;
                         rsize += sold->rows();
                         csize += sold->cols();
-                        auto t00 = systime();
-                        for (auto d2c: sold->dist2connxs) if(d2c->lvl() >= this->current_bottom) snew->dist2connxs.insert(d2c->get_parent());
-                        auto t01 = systime();
-                        time_dist2 += elapsed(t00,t01);
+                        // auto t00 = systime();
+                        // for (auto d2c: sold->dist2connxs) if(d2c->lvl() >= this->current_bottom) snew->dist2connxs.insert(d2c->get_parent());
+                        // auto t01 = systime();
+                        // time_dist2 += elapsed(t00,t01);
                     }
                     snew->set_size(rsize, csize); 
                     snew->set_org(rsize, csize);
@@ -1702,7 +1693,7 @@ int ParTree::factorize(){
             auto mt01= systime();
             if (my_rank==0){
                 cout << "Time to update size: " << elapsed(mt0, mt01) << endl;
-                cout << "Time to dist2: " << time_dist2 << endl;
+                // cout << "Time to dist2: " << time_dist2 << endl;
             }
             
 
