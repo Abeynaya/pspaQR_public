@@ -393,7 +393,8 @@ void ParTree::compute_new_edges_empty(Cluster* snew){
                 snew_cnbrs.insert(n->get_parent());
             }
         }
-        for (auto d2c: sold->dist2connxs) if(d2c->lvl() >= this->current_bottom) snew->dist2connxs.insert(d2c->get_parent());
+        bool geo = (Xcoo != nullptr);
+        if(!geo) {for (auto d2c: sold->dist2connxs) if(d2c->lvl() >= this->current_bottom) snew->dist2connxs.insert(d2c->get_parent());}
     }
     // Allocate memory and create new edges
     for (auto n: snew_cnbrs){
@@ -889,7 +890,7 @@ int ParTree::factorize(){
             // Threadpool
             Communicator comm(MPI_COMM_WORLD);
             Threadpool_dist tp(ttor_threads, &comm, verb, "fillin_"+ to_string(ilvl)+"_" +to_string(my_rank)+"_");
-            // Taskflow<Cluster*> get_sparsity_tf(&tp, verb);
+            Taskflow<Cluster*> get_sparsity_tf(&tp, verb);
             Taskflow<pCluster2> fillin_tf(&tp, verb);
             Taskflow<pCluster2> fillin_empty_tf(&tp, verb);
             Taskflow<Cluster*> allocate_tf(&tp, verb);
@@ -898,6 +899,33 @@ int ParTree::factorize(){
             if (this->ttor_log){
                 tp.set_logger(&log);
             }
+
+            get_sparsity_tf.set_mapping([&] (Cluster* c){
+                    return c->get_order()%ttor_threads; 
+                })
+                .set_indegree([](Cluster*){
+                    return 1;
+                })
+                .set_task([&] (Cluster* c) {
+                    this->get_sparsity(c);
+                })
+                .set_fulfill([&] (Cluster* c){
+                    bool allocate = false;
+                    for (auto n: c->rsparsity){
+                        if (cluster2rank(n) == my_rank) {
+                            fillin_tf.fulfill_promise({c,n}); 
+                            if (cluster2rank(c) != cluster2rank(n)) allocate = true;
+                        }
+                        else fillin_empty_tf.fulfill_promise({c,n});
+                    }
+                    if (allocate) allocate_tf.fulfill_promise(c);
+                })
+                .set_name([](Cluster* c) {
+                    return "get_sparsity_" + to_string(c->get_order());
+                })
+                .set_priority([&](Cluster*) {
+                    return 6;
+                });
 
             fillin_tf.set_mapping([&] (pCluster2 cn){
                         return cn[1]->get_order()%ttor_threads; // Important to avoid race conditions 
@@ -963,16 +991,17 @@ int ParTree::factorize(){
             vstart = systime();
             {
                 for (auto& c:this->interiors_current()){
-                    this->get_sparsity(c); // every rank
-                    bool allocate = false;
-                    for (auto& n: c->rsparsity){
-                        if (cluster2rank(n) == my_rank) {
-                            fillin_tf.fulfill_promise({c,n}); 
-                            if (cluster2rank(c) != cluster2rank(n)) allocate = true;
-                        }
-                        else fillin_empty_tf.fulfill_promise({c,n});
-                    }
-                    if (allocate) allocate_tf.fulfill_promise(c);
+                    get_sparsity_tf.fulfill_promise(c);
+                    // this->get_sparsity(c); // every rank
+                    // bool allocate = false;
+                    // for (auto& n: c->rsparsity){
+                    //     if (cluster2rank(n) == my_rank) {
+                    //         fillin_tf.fulfill_promise({c,n}); 
+                    //         if (cluster2rank(c) != cluster2rank(n)) allocate = true;
+                    //     }
+                    //     else fillin_empty_tf.fulfill_promise({c,n});
+                    // }
+                    // if (allocate) allocate_tf.fulfill_promise(c);
                 }
             }
             tp.join();
@@ -1624,6 +1653,14 @@ int ParTree::factorize(){
                     }
                 });
 
+                // auto send_size_am = comm.make_active_msg([&] (view<int>& sizes_view){
+                //     for (auto& orc : sizes_view){
+                //         int order = orc[0];
+                //         Cluster* c = get_interface(order);
+                //         c->reset_size(orc[1], orc[2]);
+                //     }
+                // });
+
                 auto send_edge_am = comm.make_active_msg([&] (int& n1_order, int& n2_order, int& A_rows, int& A_cols, view<double>& A){
                     Cluster* n1 = get_interface(n1_order);
                     Cluster* n2 = get_interface(n2_order);
@@ -1654,6 +1691,8 @@ int ParTree::factorize(){
                                     send_edge_am->send(dest, n1_order, n2_order, A_rows, A_cols, A_view);
                                 }
                             }
+                            // auto dist2_view = view<int>(sold->dist2connxs.data(), sold->dist2connxs.size());
+                            // send_dist2_am->send(dest, dist2_view);
                         }
                     }
                 }
