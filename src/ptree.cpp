@@ -38,29 +38,14 @@ bool ParTree::want_sparsify(Cluster* c) const{
 }
 
 Cluster* ParTree::get_interior(int c_order) const {
-    // if (current_bottom_lvl() == 0) return 
-    // auto found = find_if(this->interiors_current().begin(), this->interiors_current().end(), [&c_order](Cluster* n){return c_order == n->get_order();});
-    // assert(found != this->interiors_current().end()); 
-    // return *found; 
     return get_cluster(c_order);
 }
 
 Cluster* ParTree::get_interface(int c_order) const {
-    // auto found = find_if(this->interfaces_current().begin(), this->interfaces_current().end(), [&c_order](Cluster* n){return c_order == n->get_order();});
-    // assert(found != this->interfaces_current().end()); 
-    // return *found; 
     return get_cluster(c_order);
 }
 
 Cluster* ParTree::get_cluster(int c_order) const {
-    // auto found = find_if(this->bottom_current().begin(), this->bottom_current().end(), [&c_order](Cluster* n){return c_order == n->get_order();});
-    // assert(found != this->bottom_current().end()); 
-    // return *found; 
-    // if (this->current_bottom_lvl() == 0) {
-    //     assert(this->bottom_current()[c_order]->get_order() == c_order);
-    //     return this->bottom_current()[c_order];
-    // }
-    // else {
     int index = c_order - this->bottom_current()[0]->get_order();
     assert(index < this->bottom_current().size());
     assert(this->bottom_current()[index]->get_order() == c_order);
@@ -68,10 +53,6 @@ Cluster* ParTree::get_cluster(int c_order) const {
 }
 
 Cluster* ParTree::get_cluster_at_lvl(int c_order, int l) const {
-    // auto found = find_if(this->clusters_at_lvl(l).begin(), this->clusters_at_lvl(l).end(), 
-    //                         [&c_order](Cluster* n){return c_order == n->get_order();});
-    // assert(found != this->clusters_at_lvl(l).end()); 
-    // return *found; 
     int index = c_order - this->clusters_at_lvl(l)[0]->get_order();
     assert(index < this->clusters_at_lvl(l).size());
     assert(this->clusters_at_lvl(l)[index]->get_order() == c_order);
@@ -147,30 +128,6 @@ Edge* ParTree::new_edgeOut_empty(Cluster* c1, Cluster* c2){
     return e; 
 }
 
-/* Add a fillin edge between c1 and c2
- such that A(c2, c1) block is non-zero */
-// Edge* ParTree::new_edgeOutFillin(Cluster* c1, Cluster* c2){
-//     Edge* e;
-//     MatrixXd* A = new MatrixXd(c2->rows(), c1->cols());
-//     A->setZero();
-//     e = new Edge(c1, c2, A);
-//     c1->cnbrs.insert(c2); // probably safe?
-//     c1->add_edgeOutFillin(e);
-
-//     bool is_spars_nbr = false;
-//     if (c1->lvl()>this->current_bottom && c2->lvl()>this->current_bottom && c1 != c2){
-//         c1->add_edge_spars_out(e);
-//         is_spars_nbr = true;
-//     }
-//     if (c1 != c2) { // If distributed... c2 can reside in a different rank
-//         c2->add_edgeInFillin(e,is_spars_nbr); // thread-safe using lock_guard
-//         // else {
-//         //     // AM send edge->n1 and edge->n2 
-//         // }
-//     }
-//     return e; 
-// }
-
 void ParTree::alloc_fillin(Cluster* c, Cluster* n){
     for (auto& edge: c->edgesOut){
         Cluster* nbr_c = edge->n2; 
@@ -183,20 +140,6 @@ void ParTree::alloc_fillin(Cluster* c, Cluster* n){
             (*found_out)->interior_deps++;
         }
     }
-
-
-    // Part 2:
-    // if (nbr_c == n){
-    //     // Add edges in too!
-    //     for (auto& rn: c->rsparsity){
-    //         if (cluster2rank(rn) == my_rank) continue; // will be taken care of 
-    //         auto found_in = find_if(n->edgesIn.begin(), n->edgesIn.end(), [&rn](Edge* e){return e->n1 == rn;});
-    //         if (found_in == n->edgesIn.end()){
-    //             bool is_spars_nbr = n->lvl()>this->current_bottom && rn->lvl()>this->current_bottom && n != rn;
-    //             n->add_edgeIn(new Edge(rn, n), is_spars_nbr);  // doesn't need lock -- TODO
-    //         }
-    //     }
-    // }
     return;
 }
 
@@ -864,9 +807,9 @@ void ParTree::assemble(SpMat& A){
 }
 
 void ParTree::get_sparsity(Cluster* c){
-    c->rsparsity.insert(c->dist2connxs.begin(), c->dist2connxs.end());
+    // c->rsparsity = c->dist2connxs.begin(), c->dist2connxs.end());
     for (auto& edge: c->edgesIn){
-        c->rsparsity.insert(edge->n1);
+        c->dist2connxs.insert(edge->n1);
     }
 }
 
@@ -911,7 +854,7 @@ int ParTree::factorize(){
                 })
                 .set_fulfill([&] (Cluster* c){
                     bool allocate = false;
-                    for (auto n: c->rsparsity){
+                    for (auto n: c->dist2connxs){
                         if (cluster2rank(n) == my_rank) {
                             fillin_tf.fulfill_promise({c,n}); 
                             if (cluster2rank(c) != cluster2rank(n)) allocate = true;
@@ -992,16 +935,6 @@ int ParTree::factorize(){
             {
                 for (auto& c:this->interiors_current()){
                     get_sparsity_tf.fulfill_promise(c);
-                    // this->get_sparsity(c); // every rank
-                    // bool allocate = false;
-                    // for (auto& n: c->rsparsity){
-                    //     if (cluster2rank(n) == my_rank) {
-                    //         fillin_tf.fulfill_promise({c,n}); 
-                    //         if (cluster2rank(c) != cluster2rank(n)) allocate = true;
-                    //     }
-                    //     else fillin_empty_tf.fulfill_promise({c,n});
-                    // }
-                    // if (allocate) allocate_tf.fulfill_promise(c);
                 }
             }
             tp.join();
@@ -1058,13 +991,6 @@ int ParTree::factorize(){
             /* Sparsify */
             Taskflow<Cluster*> sparsify_rrqr_tf(&tp, verb);
             Taskflow<Edge*> sparsify_larfb_tf(&tp, verb);
-
-            // double time_to_get =0;
-            // double time_tot =0;
-            // double time_store =0;
-            // double time_satisfy =0;
-
-
 
             {
                 auto t0 = wctime();
@@ -1249,25 +1175,15 @@ int ParTree::factorize(){
                     int nb = min(32, c_cols);
                     MatrixXd Tmat = Map<MatrixXd>(T_data.data(), nb, c_cols);
                     c->set_T(n_order, Tmat);
-                    // auto t3 = systime();
 
                     // Satisfy dependencies 
                     for (int& m_order: ssrfb_deps){
-                        // auto t00 = systime();
-
                         Cluster* m = get_interface(m_order);
-                        // auto t10 = systime();
-                        // time_to_get += elapsed(t00,t10);
-
                         auto eit_mn = m->find_out_edge(n_order);
                         auto eit_mc = m->find_out_edge(c_order);
                         assert(cluster2rank(m)==my_rank);
                         ssrfb_tf.fulfill_promise({eit_cn, eit_mc, eit_mn}); // c->n, m->c, m->n
                     }
-                    // auto t2 = systime();
-                    // time_tot += elapsed(t0,t2);
-                    // time_store += elapsed(t1,t3);
-                    // time_satisfy += elapsed(t3,t2);
                 });
 
             tsqrt_tf.set_mapping([&] (EdgeIt eit){
@@ -1610,12 +1526,6 @@ int ParTree::factorize(){
                 logfile.close();
             }
             auto log1 = systime();
-
-            // cout << "Time to get: " << time_to_get << endl;
-            // cout << "Time tot: " << time_tot << endl;
-            // cout << "Time store: " << time_store << endl;
-            // cout << "Time satisfy: " << time_satisfy << endl;
-
         }
 
         // Merge
@@ -1623,8 +1533,6 @@ int ParTree::factorize(){
         if (this->ilvl < nlevels-1)
         {
             {
-                auto mt0= systime();
-
                 // Set all interiors to eliminated -- important to not interfere with the merging process
                 for (auto& c: this->interiors_current()){
                     c->set_eliminated();
@@ -1652,14 +1560,6 @@ int ParTree::factorize(){
                         c->reset_size(orc[1], orc[2]);
                     }
                 });
-
-                // auto send_size_am = comm.make_active_msg([&] (view<int>& sizes_view){
-                //     for (auto& orc : sizes_view){
-                //         int order = orc[0];
-                //         Cluster* c = get_interface(order);
-                //         c->reset_size(orc[1], orc[2]);
-                //     }
-                // });
 
                 auto send_edge_am = comm.make_active_msg([&] (int& n1_order, int& n2_order, int& A_rows, int& A_cols, view<double>& A){
                     Cluster* n1 = get_interface(n1_order);
@@ -1691,24 +1591,17 @@ int ParTree::factorize(){
                                     send_edge_am->send(dest, n1_order, n2_order, A_rows, A_cols, A_view);
                                 }
                             }
-                            // auto dist2_view = view<int>(sold->dist2connxs.data(), sold->dist2connxs.size());
-                            // send_dist2_am->send(dest, dist2_view);
                         }
                     }
                 }
                 tp.join();
                 MPI_Barrier(MPI_COMM_WORLD);
-                auto mt1= systime();
-                // cout << "Time to send merge: " << elapsed(mt0,mt1) <<endl;
-
             }
 
-            auto mt0= systime();
             // Actual merge
             this->current_bottom++;
             // Update sizes -- sequential because we need a synch point after this and this is cheap anyway
             for (auto snew: this->bottom_current()){
-                // if (cluster2rank(snew) == my_rank){ // Need to be done in all ranks
                 int rsize = 0;
                 int csize = 0;
                 for (auto sold: snew->children){
@@ -1716,21 +1609,11 @@ int ParTree::factorize(){
                     sold->cposparent = csize;
                     rsize += sold->rows();
                     csize += sold->cols();
-                    // auto t00 = systime();
-                    // for (auto d2c: sold->dist2connxs) if(d2c->lvl() >= this->current_bottom) snew->dist2connxs.insert(d2c->get_parent());
-                    // auto t01 = systime();
-                    // time_dist2 += elapsed(t00,t01);
                 }
                 snew->set_size(rsize, csize); 
                 snew->set_org(rsize, csize);
             }
-            auto mt01= systime();
-            if (my_rank==0){
-                cout << "Time to update size: " << elapsed(mt0, mt01) << endl;
-            }
             
-
-
             // Update edges
             Communicator comm(MPI_COMM_WORLD);
             Threadpool_dist tp(ttor_threads, &comm, verb, "merge_" + to_string(ilvl)+"_"+to_string(my_rank)+"_");
@@ -1795,9 +1678,6 @@ int ParTree::factorize(){
                 logfile.close();
             }
             auto log1 = systime();
-            auto mt1= systime();
-            if (my_rank==0) cout << "Time to update edges: " << elapsed(mt0, mt1)<< endl;
-
         }
         mend = systime();
         auto lvl1 = systime();
