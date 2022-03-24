@@ -801,7 +801,7 @@ void Tree::assemble(SpMat& A){
         for (auto nbr: cnbrs){
             MatrixXd* sA = new MatrixXd(nbr->rows(), self->cols());
             sA->setZero();
-            block2dense(rowval, colptr, nnzval, nbr->get_rstart(), self->get_cstart(), nbr->rows(), self->cols(), sA, false); 
+            block2dense(rowval, colptr, nnzval, nbr->get_rstart(), self->get_cstart(), nbr->rows(), self->cols(), sA, nullptr, false); 
             Edge* e = new Edge(self, nbr, sA);
             self->add_edgeOut(e);
 

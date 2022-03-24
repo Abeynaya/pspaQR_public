@@ -24,4 +24,7 @@ int cgls(const MatrixType& mat, const Rhs& rhs, Dest& x, const Preconditioner& p
 template<typename MatrixType, typename Rhs, typename Dest, typename Preconditioner>
 int lscg_eigen(const MatrixType& mat, const Rhs& rhs, Dest& x, const Preconditioner& precond, int iters, double tol, bool verb);
 
+template <typename Precond>
+unsigned long dist_gmres(const SpMat& A, Eigen::VectorXd& b, const Precond& M, unsigned long iter, double tol, bool verb);
+
 #endif

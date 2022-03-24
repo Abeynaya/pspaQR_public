@@ -48,6 +48,10 @@ ClusterID Cluster::get_id() const {return id;}
 SepID Cluster::get_sepID(){return id.self;};
 int Cluster::part(){return id.part;};
 int Cluster::section(){return id.section;};
+void Cluster::set_local_cstart(int c) {local_cstart = c;};
+void Cluster::set_local_rstart(int r) {local_rstart = r;};
+int Cluster::cstart_local() {return local_cstart;};
+int Cluster::rstart_local() {return local_rstart;};
 
 /*Heirarchy*/
 Cluster* Cluster::get_parent(){return parent;}
@@ -68,6 +72,8 @@ void Cluster::add_self_edge(Edge* e){
     eself = e;
 }
 void Cluster::add_edgeOut(Edge* e){edgesOut.push_back(e);}
+void Cluster::add_edgeOut_org(spEdge* e){edgesOut_org.push_back(e);}
+
 void Cluster::add_edgeIn(Edge* e){edgesIn.push_back(e);}
 
 void Cluster::add_edgeOutFillin(Edge* e){edgesOutFillin.push_back(e);}

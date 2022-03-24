@@ -59,8 +59,6 @@ class Tree{
         std::vector<std::vector<Cluster*>> bottoms; // bottoms.size() = nlevels
         std::vector<std::vector<Cluster*>> interiors; //interiors.size() = nlevels
         std::vector<std::vector<Cluster*>> interfaces; // interfaces.size() = nlevels
-        // std::vector<std::list<Cluster*>> interfaces2sparsify; // interfaces2sparsify.size() = nlevels
-        // std::vector<std::list<Cluster*>> interfaces_no_sparsify; // interfaces_no_sparsify.size() = nlevels
 
         std::vector<std::list<Cluster*>> fine; // list of fine nodes
 

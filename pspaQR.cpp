@@ -27,6 +27,7 @@ int main(int argc, char* argv[]){
     int req = MPI_THREAD_FUNNELED;
     int prov = -1;
     MPI_Init_thread(NULL, NULL, req, &prov);
+    const int my_rank = ttor::comm_rank();
   
     cxxopts::Options options("spaQR", "Sparsified QR for general sparse matrices");
     options.add_options()
@@ -196,78 +197,8 @@ int main(int argc, char* argv[]){
     t.set_verbose(verbose);
     t.set_ttor_log(tlog);
 
-
-
     if (nrows == ncols) t.set_square(1); // default 0
     if(geo) t.set_Xcoo(&X);
-
-    if (useEigenLSCG) {
-        VectorXd x = VectorXd::Zero(ncols);
-        VectorXd b = random(nrows,2021);
-        
-        LeastSquaresConjugateGradient<SpMat, LeastSquareDiagonalPreconditioner<double>> lscg;
-        lscg.compute(A);
-
-        LeastSquareDiagonalPreconditioner<double> diag_precond = lscg.preconditioner();
-
-        timer cgls0 = systime();
-        auto iter = lscg_eigen(A, b, x, diag_precond, iterations, residual, true);
-        timer cgls1 = systime();
-
-        cout << "CGLS error: " << scientific <<  (A.transpose()*(A*x-b)).norm() / (A.transpose()*b).norm() << endl;
-        cout << "  CGLS: " << elapsed(cgls0, cgls1) << " s." << endl;
-        cout << "<<<<CGLS=" << iter << endl;
-        return 0;
-    }
-
-    if (useEigenQR){
-        VectorXd x = VectorXd::Zero(ncols);
-        VectorXd b = random(nrows,2021);
-        
-        A.makeCompressed();  
-        SparseQR<SpMat, COLAMDOrdering<int>> eigenQR;
-
-        eigenQR.setPivotThreshold(1e-14);
-        cout << "\n <<<< Using Eigen SparseQR routine..." << endl;
-        timer qr0 = systime();
-        eigenQR.compute(A);
-        timer qr1 = systime();
-        cout << "Time to factorize: " << elapsed(qr0, qr1) << " s." << endl;
-
-        timer qrs0 = systime();
-        x = eigenQR.solve(b);
-        timer qrs1 = systime();
-        cout << "Time to solve: " << elapsed(qrs0, qrs1) << " s." << endl;
-        cout << "Error: " << scientific << (A.transpose()*(A*x-b)).norm() / (A.transpose()*b).norm() << endl; 
-        
-        return 0;
-    }
-
-    if (useCholesky){
-        VectorXd x = VectorXd::Zero(ncols);
-        VectorXd b = random(nrows,2021);
-
-        VectorXd Atb = A.transpose()*b;
-        SpMat AtA = A.transpose()*A;
-        
-        AtA.makeCompressed();
-        SimplicialLLT<SpMat, Lower, AMDOrdering<int> > eigenCholesky;
-        cout << "\n <<<< Using Eigen's SimplicalLL^T routine..." << endl;
-
-        timer qr0 = systime();
-        eigenCholesky.compute(AtA);
-        timer qr1 = systime();
-        cout << "Time to factorize: " << elapsed(qr0, qr1) << " s." << endl;
-
-        timer qrs0 = systime();
-        x = eigenCholesky.solve(Atb);
-        timer qrs1 = systime();
-
-        cout << "Time to solve: " << elapsed(qrs0, qrs1) << " s." << endl;
-        cout << "Error: " << scientific << (A.transpose()*(A*x-b)).norm() / (A.transpose()*b).norm() << endl; 
-        
-        return 0;
-    }
 
     // Partition
     t.partition(A);
@@ -286,7 +217,7 @@ int main(int argc, char* argv[]){
     {
          // Random b
         {
-            VectorXd b = random(nrows, 2020);
+            VectorXd b = random(nrows, 2021);
             VectorXd bcopy = b;
             VectorXd x(ncols, 1);
             x.setZero();
@@ -295,7 +226,7 @@ int main(int argc, char* argv[]){
             if (nrows == ncols){
                     t.solve(bcopy, x);
                     timer tsolv = systime();
-                if (ttor::comm_rank() == 0){
+                if (my_rank == 0){
                     cout << "<<<<tsolv=" << elapsed(tsolv_0, tsolv) << endl;
                     cout << "One-time solve (Random b):" << endl;             
                     cout << "<<<<|(Ax-b)|/|b| : " << scientific <<  ((A*x-b)).norm() / (b).norm() << endl;
@@ -311,45 +242,54 @@ int main(int argc, char* argv[]){
         }
     }
     
-    /*
+    
     bool verb = true; 
     int iter = 0;
     if (!err)
     {
-        VectorXd x = VectorXd::Zero(ncols);
-        VectorXd b;
+        // VectorXd x = VectorXd::Zero(t.ncols_local());
+        VectorXd x;
         if ((!result.count("rhs"))){
-            b = random(nrows,2021);
+            x = random(t.nrows_local(),my_rank+2021);
         }
         else {
-            string rhs_file = result["rhs"].as<string>();
-            b = mmio::vector_mmread<double>(rhs_file);
+            cout << "Reading in RHS not implemented... " << endl;
+            return 1;
         }
-        VectorXd bcopy = b;
+        // else {
+        //     string rhs_file = result["rhs"].as<string>();
+        //     b = mmio::vector_mmread<double>(rhs_file);
+        // }
+        VectorXd b = x;
 
     
         if(useGMRES) {
-            if (ttor::comm_rank() == 0){
-                timer gmres0 = systime();
-                iter = gmres(A, b, x, t, iterations, iterations, residual, verb);
-                timer gmres1 = systime();
-                cout << "GMRES: #iterations: " << iter << ", residual |Ax-b|/|b|: " << (A*x-b).norm() / b.norm() << endl;
+            timer gmres0 = systime();
+            iter = dist_gmres(A, x, t, iterations, residual, verb);
+            timer gmres1 = systime();
+            const VectorXd Ax = t.spmv(x);
+            const VectorXd r = b - Ax;
+            const double rnorm = VecNorm(r);
+            const double bnorm = VecNorm(b);
+            const double relres = rnorm/bnorm;
+            if (my_rank == 0){
+                cout << "GMRES: #iterations: " << iter << ", residual |Ax-b|/|b|: " << relres << endl;
                 cout << "  GMRES: " << elapsed(gmres0, gmres1) << " s." << endl;
                 cout << "<<<<GMRES=" << iter << endl;
             }
         }
-        else if(useCGLS){
-            timer cg0 = systime();
+        // else if(useCGLS){
+        //     timer cg0 = systime();
 
-            Index max_iters = (long)iterations;
-            iter = cgls(A, b, x, t, max_iters, residual, verb);
-            cout << "CGLS: #iterations: " << iter << ", residual |A'(Ax-b)|/|A'(b)|: " << (A.transpose()*(A*x-b)).norm() / (A.transpose()*b).norm() << endl;
-            timer cg1 = systime();
-            cout << "  CGLS: " << elapsed(cg0, cg1) << " s." << endl;
-            cout << "<<<<CGLS=" << iter << endl;
-        }
+        //     Index max_iters = (long)iterations;
+        //     iter = cgls(A, b, x, t, max_iters, residual, verb);
+        //     cout << "CGLS: #iterations: " << iter << ", residual |A'(Ax-b)|/|A'(b)|: " << (A.transpose()*(A*x-b)).norm() / (A.transpose()*b).norm() << endl;
+        //     timer cg1 = systime();
+        //     cout << "  CGLS: " << elapsed(cg0, cg1) << " s." << endl;
+        //     cout << "<<<<CGLS=" << iter << endl;
+        // }
     }
-    */
+    
     
     MPI_Finalize();
     return 0;  

@@ -444,13 +444,94 @@ int lscg_eigen(const MatrixType& mat, const Rhs& rhs, Dest& x, const Preconditio
     return iters;
 };
 
+template <typename Precond>
+unsigned long dist_gmres(const SpMat& A, Eigen::VectorXd& b, const Precond& M, unsigned long iter, double tol, bool verb){
+    const unsigned long n_local = M.ncols_local();
+    assert(M.ncols_local() == b.size());
+    int size = 1, rank = 0;
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+    // use 0 as the initial vector
+    Eigen::VectorXd r = b;
+    M.solve(r); //r = M\r
+    const double b_norm = VecNorm(b);
+    const double r_norm = VecNorm(r);
+    assert(!std::isnan(r_norm));
+    const double error = r_norm/b_norm;
+
+    // initialize the 1D vectors
+    Eigen::VectorXd sn = Eigen::VectorXd::Zero(iter);
+    Eigen::VectorXd cs = Eigen::VectorXd::Zero(iter);
+    Eigen::VectorXd e1 = Eigen::VectorXd::Zero(iter);
+    e1(0) = 1;
+    Eigen::VectorXd e = Eigen::VectorXd::Zero(iter);
+    e(0) = error;
+
+    Eigen::MatrixXd Q = Eigen::MatrixXd::Zero(n_local,iter+1);
+    Q.col(0) = r / r_norm;
+    Eigen::VectorXd beta = Eigen::VectorXd::Zero(iter + 1);
+    beta.head(iter) = r_norm * e1;
+    Eigen::MatrixXd H = Eigen::MatrixXd::Zero(iter+1, iter);
+    unsigned long k = 0;
+
+    for (; k < iter; ++k) {
+
+        // Arnoldi process
+        Eigen::VectorXd q = M.spmv(Q.col(k));
+        M.solve(q); //q= M\q
+        for (int i = 0; i < k + 1; ++i) {
+            H(i,k) = VecDot(q, Q.col(i));
+            q -= H(i,k) * Q.col(i);
+        }
+        H(k + 1, k) = VecNorm(q);
+        q = q / H(k + 1, k);
+        Q.col(k + 1) = q;
+
+        // Givens Rotation
+        for (int i = 0; i < k; ++i) {
+            double temp = cs(i) * H(i, k) + sn(i) * H(i + 1, k);
+            H(i + 1, k) = -sn(i) * H(i, k) + cs(i) * H(i + 1, k);
+            H(i, k) = temp;
+        }
+
+        if (H(k, k) == 0){
+            cs(k) = 0;
+            sn(k) = 1;
+        }
+        else {
+            double t = sqrt(H(k, k) * H(k, k) + H(k + 1, k) * H(k + 1, k));
+            cs(k) = abs(H(k, k)) / t;
+            sn(k) = cs(k) * H(k + 1, k) / H(k, k);
+        }
+        H(k, k) = cs(k) * H(k, k) + sn(k) * H(k + 1, k);
+        H(k + 1, k) = 0.0;
+
+        beta(k+1) = -sn(k) * beta(k);
+        beta(k) = cs(k) * beta(k);
+        const double error = abs(beta(k+1)) / r_norm;
+        if (rank == 0 && verb) printf("GMRES: error at step %lu is %e\n", k, error);
+        if (error <= tol && verb) {
+            if (rank == 0) printf("GMRES: converged error at iteration %lu is %e < %e\n", k, error, tol);
+            break;
+        }
+       MPI_Barrier(MPI_COMM_WORLD);
+    }
+
+    k = std::min(k, iter - 1);
+    Eigen::VectorXd y = LUSolve(H.block(0,0,k+1,k+1), beta.head(k+1), k);
+    Eigen::VectorXd xxx = RowMatVec(Q.block(0, 0, n_local, k + 1), y);
+    b = RowMatVec(Q.block(0, 0, n_local, k + 1), y);
+
+    return k;
+}
 
 template int cg(const SpMat& mat, const Eigen::VectorXd& rhs, Eigen::VectorXd& x, const Tree& precond, int iters, double tol, bool verb);
 template int gmres(const SpMat& mat, const Eigen::VectorXd& rhs, Eigen::VectorXd& x, const Tree& precond, int iters, int restart, double tol_error, bool verb);
 template int cgls(const SpMat& mat, const Eigen::VectorXd& rhs, Eigen::VectorXd& x, const Tree& precond, Eigen::Index& iters, Eigen::VectorXd::RealScalar& tol, bool verb);
 template int lscg_eigen(const SpMat& mat, const Eigen::VectorXd& rhs, Eigen::VectorXd& x, const Eigen::LeastSquareDiagonalPreconditioner<double>& precond, int iters, double tol, bool verb);
 
-template int gmres(const SpMat& mat, const Eigen::VectorXd& rhs, Eigen::VectorXd& x, const ParTree& precond, int iters, int restart, double tol_error, bool verb);
-template int cgls(const SpMat& mat, const Eigen::VectorXd& rhs, Eigen::VectorXd& x, const ParTree& precond, Eigen::Index& iters, Eigen::VectorXd::RealScalar& tol, bool verb);
+// template int gmres(const SpMat& mat, const Eigen::VectorXd& rhs, Eigen::VectorXd& x, const ParTree& precond, int iters, int restart, double tol_error, bool verb);
+// template int cgls(const SpMat& mat, const Eigen::VectorXd& rhs, Eigen::VectorXd& x, const ParTree& precond, Eigen::Index& iters, Eigen::VectorXd::RealScalar& tol, bool verb);
 
-
+template unsigned long dist_gmres(const SpMat& A, Eigen::VectorXd& b, const ParTree& M, unsigned long iter, double tol, bool verb);

@@ -62,6 +62,9 @@ private:
 	int verb; // For ttor debugging
 	int ttor_log; // For ttor logging and profiling
 
+	int local_cols;
+	int local_rows;
+
 	/* Helper */
 	bool want_sparsify(Cluster*) const;
 	Cluster* get_interior(int) const; // given order return the cluster
@@ -117,9 +120,16 @@ public:
 	int cluster2rank(Cluster*) const;
 	int edge2rank(Edge*) const;
 
+	int nrows_local() const;
+	int ncols_local() const;
+
 
 	ParTree(int nlevels_, int skip_) : Tree(nlevels_, skip_), my_rank(ttor::comm_rank()),
-										n_ranks(ttor::comm_size()) {n_threads=1;};
+										n_ranks(ttor::comm_size()) {
+											n_threads=1;
+											local_cols = 0;
+											local_rows = 0;
+										};
 
 	// Add new edge 
 	Edge* new_edgeOut(Cluster*, Cluster*);
@@ -130,6 +140,9 @@ public:
 	void get_sparsity(Cluster*);
 	int factorize();
 	void solve(Eigen::VectorXd b, Eigen::VectorXd& x) const;
+	void solve(Eigen::VectorXd& x) const;
+
+	Eigen::VectorXd spmv(Eigen::VectorXd x) const;
 	~ParTree() {};
 };
 

@@ -16,6 +16,8 @@
 
 typedef Eigen::SparseMatrix<double, 0, int> SpMat;
 struct Edge;
+struct spEdge;
+
 // struct Cluster;
 typedef std::list<Edge*>::iterator EdgeIt;
 
@@ -152,6 +154,8 @@ private:
     // Original size of the cluster (when the cluster is formed)
     int csize_org;
     int rsize_org;
+    int local_cstart; 
+    int local_rstart;
 
     /* Hierarchy */
     Cluster* parent; 
@@ -198,6 +202,8 @@ public:
     std::set<Cluster*> cnbrs; // neigbors including self
     std::set<Cluster*> rnbrs; // neigbors including self
     std::list<Edge*> edgesOut;
+    std::list<spEdge*> edgesOut_org; // Original pieces of the permuted matrix (matrix stored in sparse format)
+
     std::list<Edge*> edgesIn;
     std::list<Edge*> edgesOutFillin;
     std::list<Edge*> edgesInFillin;
@@ -221,6 +227,8 @@ public:
                 csize_org = csize_;
                 rsize_org = rsize_;
                 rank = csize_;
+                local_cstart = -1;
+                local_rstart = -1;
             };
 
     // Whether a cluster has been eliminated
@@ -229,7 +237,6 @@ public:
     }
     // Set clusters as eliminated
     void set_eliminated() {
-       // assert(! eliminated);
        eliminated = true;
     }
 
@@ -257,6 +264,12 @@ public:
     int original_cols() const;
     void set_org(int r, int c);
 
+    void set_local_cstart(int);
+    void set_local_rstart(int);
+    int cstart_local();
+    int rstart_local();
+
+
     ClusterID get_id () const;
     SepID get_sepID();
 
@@ -274,6 +287,8 @@ public:
     /* Edges */
     Edge* self_edge();
     void add_self_edge(Edge*);
+    void add_edgeOut_org(spEdge* e);
+
     void add_edgeOut(Edge* e);
     void add_edgeOut_threadsafe(Cluster* n2, Eigen::MatrixXd* A);
     void add_edgeIn(Edge* e);

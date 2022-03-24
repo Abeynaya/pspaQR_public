@@ -850,12 +850,18 @@ int choose_rank(VectorXd& s, double tol, bool rel) {
     }
 }
 
-void block2dense(VectorXi &rowval, VectorXi &colptr, VectorXd &nnzval, int i, int j, int li, int lj, MatrixXd *dst, bool transpose) {
+void block2dense(VectorXi &rowval, VectorXi &colptr, VectorXd &nnzval, int i, int j, int li, int lj, MatrixXd *dst, SpMat* sp_dst, bool transpose) {
     if(transpose) {
         assert(dst->rows() == lj && dst->cols() == li);
     } else {
         assert(dst->rows() == li && dst->cols() == lj);
     }
+    int nnz=0;
+
+    bool need_sp = sp_dst == nullptr ? false : true;
+    vector<Triplet<double>> sp_vals;
+    if (need_sp) sp_vals.reserve(li*lj);
+    
     for(int col = 0; col < lj; col++) {
         // All elements in column c
         int start_c = colptr[j + col];
@@ -876,11 +882,19 @@ void block2dense(VectorXi &rowval, VectorXi &colptr, VectorXd &nnzval, int i, in
             double val = nnzval[start_c + id];
             if(transpose) {
                 (*dst)(col,row) = val;
+                if (need_sp) sp_vals.push_back(Triplet<double>(col, row, val));
             } else {
                 (*dst)(row,col) = val;
+                if (need_sp) sp_vals.push_back(Triplet<double>(row, col, val));
             }
             id ++;
+            nnz++;
         }
+    }
+    if (need_sp) {
+        sp_dst->reserve(nnz); 
+        sp_dst->setFromTriplets(sp_vals.begin(), sp_vals.begin()+nnz);
+        sp_dst->makeCompressed();
     }
 }
 
@@ -997,4 +1011,56 @@ MatrixXd random(int rows, int cols, int seed) {
         }
     }
     return A;
+}
+
+/**
+ * Code originally by Zan Xu in the SU2 codebase
+ */
+Eigen::VectorXd LUSolve(const Eigen::MatrixXd& U, const Eigen::VectorXd& b, int k){
+  Eigen::VectorXd x = Eigen::VectorXd::Zero(b.size());
+  int size = 1, rank = 0;
+  MPI_Comm_size(MPI_COMM_WORLD, &size);
+  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+  for (int i = k ; i >= 0; --i) {
+    x(i) = b(i);
+    for (int j = i + 1; j < k + 1; ++j) {
+      x(i) -= U(i,j)*x(j);
+    }
+    x(i) /= U(i,i);
+  }
+  return x;
+}
+
+Eigen::VectorXd MatVec(const Eigen::SparseMatrix<double>& A, const Eigen::VectorXd& x, const std::vector<int>& m_loc){
+  assert(A.cols() == x.size());
+  Eigen::VectorXd y_loc(x.size());
+  int size;
+  MPI_Comm_size(MPI_COMM_WORLD, &size);
+  assert(m_loc.size() == size);
+  Eigen::VectorXd y_g = A*x;
+  assert(y_g.size() == A.rows());
+  MPI_Reduce_scatter(y_g.data(), y_loc.data(), m_loc.data(), MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+  return y_loc;
+}
+
+Eigen::VectorXd RowMatVec(const Eigen::MatrixXd& A, const Eigen::VectorXd& x){
+  assert(A.cols() == x.size());
+  Eigen::VectorXd y_loc = A*x;
+  return y_loc.head(A.rows());
+}
+
+double VecNorm(const Eigen::VectorXd& A){
+  double norm_loc = A.norm();
+  norm_loc *= norm_loc;
+  double norm_global = 0.0;
+  MPI_Allreduce(&norm_loc, &norm_global, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+  return sqrt(norm_global); 
+}
+
+double VecDot(const Eigen::VectorXd& A, const Eigen::VectorXd& B) {
+  assert(A.size() == B.size());
+  double dot_loc = A.dot(B);
+  double dot_global{0.0};
+  MPI_Allreduce(&dot_loc, &dot_global, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+  return dot_global;
 }

@@ -5,3 +5,8 @@ std::ostream& operator<<(std::ostream& os, const Edge& e) {
     os << e.n1->get_id() << " " << e.n2->get_id();
     return os;
 }
+
+std::ostream& operator<<(std::ostream& os, const spEdge& e) {
+    os << e.n1->get_id() << " " << e.n2->get_id();
+    return os;
+}
