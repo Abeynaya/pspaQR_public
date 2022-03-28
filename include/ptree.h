@@ -52,6 +52,7 @@ struct std::hash<EdgeIt>
     }
 };
 
+
 class ParTree: public Tree
 {
 private:
@@ -60,6 +61,9 @@ private:
 	int n_threads;
 	int verb; // For ttor debugging
 	int ttor_log; // For ttor logging and profiling
+
+	int local_cols;
+	int local_rows;
 
 	/* Helper */
 	bool want_sparsify(Cluster*) const;
@@ -71,7 +75,9 @@ private:
 	
 
 	// Methods needed for elimination
-	void alloc_fillin(Cluster*, Cluster*, map<int,vector<int>>&);
+	void alloc_fillin(Cluster*, Cluster*);
+	void alloc_fillin_empty(Cluster*, Cluster*);
+
 	void geqrt_cluster(Cluster*);
 	void larfb_edge(Edge*);
 	void ssrfb_edges(Edge*,Edge*,Edge*);
@@ -87,7 +93,9 @@ private:
 	void sparsify_rrqr_only(Cluster*);
 
 	// Merge
-	void compute_new_edges(Cluster*, map<int, vector<int>>&);
+	void compute_new_edges(Cluster*);
+	void compute_new_edges_empty(Cluster*);
+
 
 	// Methods for solve
 	void QR_fwd(Cluster*) const;
@@ -112,17 +120,29 @@ public:
 	int cluster2rank(Cluster*) const;
 	int edge2rank(Edge*) const;
 
+	int nrows_local() const;
+	int ncols_local() const;
+
 
 	ParTree(int nlevels_, int skip_) : Tree(nlevels_, skip_), my_rank(ttor::comm_rank()),
-										n_ranks(ttor::comm_size()) {n_threads=1;};
+										n_ranks(ttor::comm_size()) {
+											n_threads=1;
+											local_cols = 0;
+											local_rows = 0;
+										};
 
 	// Add new edge 
 	Edge* new_edgeOut(Cluster*, Cluster*);
-	Edge* new_edgeOutFillin(Cluster*, Cluster*);
+	Edge* new_edgeOut_empty(Cluster*, Cluster*);
 
+	void partition(SpMat& A);
 	void assemble(SpMat& A);
+	void get_sparsity(Cluster*);
 	int factorize();
 	void solve(Eigen::VectorXd b, Eigen::VectorXd& x) const;
+	void solve(Eigen::VectorXd& x) const;
+
+	Eigen::VectorXd spmv(Eigen::VectorXd x) const;
 	~ParTree() {};
 };
 

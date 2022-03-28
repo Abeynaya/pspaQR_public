@@ -48,13 +48,20 @@ ClusterID Cluster::get_id() const {return id;}
 SepID Cluster::get_sepID(){return id.self;};
 int Cluster::part(){return id.part;};
 int Cluster::section(){return id.section;};
+void Cluster::set_local_cstart(int c) {local_cstart = c;};
+void Cluster::set_local_rstart(int r) {local_rstart = r;};
+int Cluster::cstart_local() {return local_cstart;};
+int Cluster::rstart_local() {return local_rstart;};
 
 /*Heirarchy*/
 Cluster* Cluster::get_parent(){return parent;}
 ClusterID Cluster::get_parentid(){return parentid;}
 void Cluster::set_parentid(ClusterID cid){parentid = cid;}
 void Cluster::set_parent(Cluster* p){parent = p;}
-void Cluster::add_children(Cluster* c){children.insert(c);}
+void Cluster::add_children(Cluster* c){children.push_back(c);}
+void Cluster::sort_children(){
+    children.sort([](Cluster* c1, Cluster* c2){return c1->get_id() < c2->get_id();});
+}
 
 Edge* Cluster::self_edge(){
     assert(eself!=nullptr);
@@ -65,18 +72,29 @@ void Cluster::add_self_edge(Edge* e){
     eself = e;
 }
 void Cluster::add_edgeOut(Edge* e){edgesOut.push_back(e);}
+void Cluster::add_edgeOut_org(spEdge* e){edgesOut_org.push_back(e);}
+
 void Cluster::add_edgeIn(Edge* e){edgesIn.push_back(e);}
 
 void Cluster::add_edgeOutFillin(Edge* e){edgesOutFillin.push_back(e);}
 
-void Cluster::add_edgeOut_threadsafe(Edge* e){
+void Cluster::add_edgeOut_threadsafe(Cluster* n2, Eigen::MatrixXd* A){
     std::lock_guard<std::mutex> lock(mutex_edgeOut);
-    edgesOut.push_back(e);
+    auto found = find_if(edgesOut.begin(), edgesOut.end(), [& n2](Edge* e){return e->n2 == n2;});
+    if (found == edgesOut.end()){
+        edgesOut.push_back(new Edge(this, n2, A)); 
+    }
+    else {
+        std::cout << "wtf??" << std::endl;
+        if ((*found)->A21 == nullptr) {
+            (*found)->A21 = A;
+        } 
+        else *((*found)->A21) = *A;
+    }
 }
 
 void Cluster::add_edgeIn(Edge* e, bool is_spars_nbr){
     std::lock_guard<std::mutex> lock(mutex_edgeIn);
-    // No need to check if edge is present -- will not be present for sure
     edgesIn.push_back(e);
     if (is_spars_nbr) edgesInNbrSparsification.push_back(e);
     if (e->n1->lvl() == e->n1->merge_lvl()) col_interior_deps++;
@@ -135,10 +153,10 @@ EdgeIt Cluster::find_out_edge(int n_order) {
 }
 
 /*Elimination*/
-void Cluster::set_T(Eigen::MatrixXd& T_) {
-    this->T = new Eigen::MatrixXd(0,0);
-    *(this->T) = T_;
-}
+// void Cluster::set_T(Eigen::MatrixXd& T_) {
+//     this->T = new Eigen::MatrixXd(0,0);
+//     *(this->T) = T_;
+// }
 void Cluster::create_T(int norder) {
     this->Tmap[norder] = new Eigen::MatrixXd(0,0);
 }
@@ -161,8 +179,6 @@ Eigen::MatrixXd* Cluster::get_T(int norder){
     assert(this->Tmap.at(norder)->rows() != 0);
     return this->Tmap.at(norder);
 }
-
-
 
 /* Scaling */
 void Cluster::set_Qs(Eigen::MatrixXd& Q_) {

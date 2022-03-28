@@ -281,7 +281,7 @@ void bissect_geo(vector<int> &colptr, vector<int> &rowval, vector<int> &dofs, ve
 /* Infer Separators */
 vector<ClusterID> GeometricPartitionAtA(SpMat& A, int nlevels, MatrixXd* Xcoo, int use_matching){
     SpMat AtA = A.transpose()*A;
-
+    AtA.makeCompressed();
     int c = AtA.cols();
     int r = AtA.rows();
     vector<int> parts(c);
@@ -371,6 +371,7 @@ void partition_metis_RB(SpMat& A, int nlevels, vector<int>& parts){
 
 vector<ClusterID> MetisPartition(SpMat& A, int nlevels){
     SpMat AtA = A.transpose()*A;
+    AtA.makeCompressed();
     int c = A.cols();
     int r = A.rows();
     vector<int> parts(c);
@@ -514,6 +515,7 @@ void getInterfacesUsingA(SpMat& A, int nlevels, vector<ClusterID>& cmap, vector<
     int nrows = A.rows();
 
     SpMat At = A.transpose();
+    At.makeCompressed();
     for(int i = 0; i < nrows; i++) {
         SepID self = rmap[i].self;
         // If it's a separator row
@@ -590,7 +592,7 @@ void getInterfacesUsingA_HUND(SpMat& A, int nlevels, vector<ClusterID>& cmap, ve
     assert(cmap.size() == A.cols());
     int c = A.cols();
     SpMat At = A.transpose();
-
+    At.makeCompressed();
     // Group together separators using distance 2 neighbors (or dist 1 nbrs in A'*A)
     // vector<tuple<ClusterID, ClusterID>> interfaces(c);
     for (int i=0; i<c; ++i){
