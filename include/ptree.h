@@ -129,6 +129,7 @@ public:
 											n_threads=1;
 											local_cols = 0;
 											local_rows = 0;
+											ttor_log=0;
 										};
 
 	// Add new edge 
@@ -139,9 +140,14 @@ public:
 	void assemble(SpMat& A);
 	void get_sparsity(Cluster*);
 	int factorize();
+	
+
+	// Solve
 	void solve(Eigen::VectorXd b, Eigen::VectorXd& x) const;
 	void solve(Eigen::VectorXd& x) const;
-
+	void distribute_x(VectorXd&, VectorXd&);
+	void extract_x(VectorXd&);
+	
 	Eigen::VectorXd spmv(Eigen::VectorXd x) const;
 	~ParTree() {};
 };

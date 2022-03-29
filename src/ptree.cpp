@@ -789,7 +789,7 @@ void ParTree::assemble(SpMat& A){
         } 
     }
     auto td1 = systime();
-    if(my_rank==0)cout << "dist2: " << elapsed(td0,td1) << endl;
+    // if(my_rank==0)cout << "dist2: " << elapsed(td0,td1) << endl;
 
     
     auto aend = systime();
@@ -2700,4 +2700,48 @@ VectorXd ParTree::spmv(VectorXd x) const {
     MPI_Barrier(MPI_COMM_WORLD);
 
     return Axloc;
+}
+
+void ParTree::extract_x(VectorXd& x) {
+    assert(x_dist.size() == nrows_local());
+   
+    Communicator comm(MPI_COMM_WORLD);
+    Threadpool_dist tp(1, &comm, verb, "distribute_x_"+to_string(my_rank)+"_");
+
+    auto send_to_rank_0 = comm.make_active_msg(
+            [&] (int& c_order, view<double>& xc_view){
+                Cluster* c = get_cluster_at_lvl(c_order,0);
+                assert(my_rank == 0);
+                int xc_size = c->original_cols();
+                int xc_start = c->get_cstart();
+                x.segment(xc_start,xc_size) = Map<VectorXd>(xc_view.data(), xc_size);
+            });
+
+    int dest = 0;
+    for (auto c: this->bottoms[0]){
+        if (cluster2rank(c) == my_rank) {
+            if (my_rank == 0) c->extract_vector(x);
+            else {
+                int c_order = c->get_order();
+                auto xc_view = view<double>(c->get_x()->segment(0,c->original_cols()).data(), c->original_cols());
+                send_to_rank_0->send(dest, c_order, xc_view);
+            }
+        }
+    }
+
+    tp.join();
+    MPI_Barrier(MPI_COMM_WORLD);
+    // Permute back
+    if (my_rank == 0) x = this->cperm.asPermutation() * x; 
+}
+
+void ParTree::distribute_x(VectorXd& x, VectorXd& x_dist) {
+    assert(x_dist.size() == nrows_local());
+    x = this->rperm.asPermutation()*x; // Permute x
+    
+    for (auto c: this->bottoms[0]){
+        if (cluster2rank(c) == my_rank) {
+            x_dist.segment(c->rstart_local(),c->original_rows()) = x.segment(c->get_rstart(), c->original_rows());
+        }
+    }
 }

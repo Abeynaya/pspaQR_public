@@ -140,15 +140,15 @@ void rmap2cmap(SpMat& A, vector<ClusterID>& cmap, vector<ClusterID>& rmap, int u
         if (use_matching)
             bipartite_row_matching(A, cmap, rmap, false);
         else {
-            cout << "Proceeding by matching row i to col i ..." << endl;
-            cout << "Set --hsl 1 if you want to use bipartite matching routine" << endl;
+            // cout << "Proceeding by matching row i to col i ..." << endl;
+            // cout << "Set --hsl 1 if you want to use bipartite matching routine" << endl;
             for (int i=0; i < ncols; ++i){
                 cmap[i] = rmap[i];
             }
         }
     #else 
-        cout << "May need HSL bipartite matching routine to work correctly." << endl;
-        cout << "Proceeding by matching row i to col i ..." << endl;
+        // cout << "May need HSL bipartite matching routine to work correctly." << endl;
+        // cout << "Proceeding by matching row i to col i ..." << endl;
         cmap = rmap;
         for (int i=0; i < ncols; ++i){
             cmap[i] = rmap[i];

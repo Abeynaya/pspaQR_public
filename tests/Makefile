@@ -1,10 +1,13 @@
 # MAKE SURE: ttor library should already be compiled 
-include Makefile.conf
-INCDIR = include
-EXTDIR = external
-SRCDIR = src
-OBJDIR = obj
-LIBDIR = lib
+include ../Makefile.conf
+INCDIR = ../include
+EXTDIR = ../external
+SRCDIR = ../src
+OBJDIR = ../obj
+LIBDIR = ../lib
+
+# spaQR lib
+LDFLAGS += -L$(LIBDIR) -lspaQR
 
 #Necessary
 INCLUDE = -I$(INCDIR) -I$(EXTDIR) -I$(EIGENDIR) -I$(BLASDIR) -I$(TTORDIR)
@@ -18,7 +21,6 @@ else
     CFLAGS += -g -O3 -DEIGEN_NO_DEBUG -DNDEBUG -Wno-unused-variable 
     CFLAGS += -mtune=native -march=native -fomit-frame-pointer -funroll-loops -ffast-math 
     #-funsafe-math-optimizations
-
 endif
 
 #Metis or Patoh
@@ -53,24 +55,13 @@ DEPS := $(wildcard $(INCDIR)/*.h)
 OBJ := $(patsubst $(INCDIR)/%.h,$(OBJDIR)/%.o,$(DEPS))
 
 TTOROBJ := $(wildcard $(TTORLIB)/*.o)
-all: spaQR spaQR_lib
-
-# Tests
-$(OBJDIR)/%.o: %.cpp $(DEPS) 
-	$(CC) -c -o $@ $< $(CFLAGS) $(INCLUDE)
-
-# Source
-$(OBJDIR)/%.o: $(SRCDIR)/%.cpp $(DEPS)
-	$(CC) -c -o $@ $< $(CFLAGS) $(INCLUDE) 
+all: test_pspaQR
 
 # Executables
-spaQR: pspaQR.cpp $(OBJ) $(TTOROBJ)
+test_pspaQR: test_pspaQR.cpp $(TTOROBJ)
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS) $(BLAS_PAR_LIBS) $(INCLUDE)  
 .PHONY: clean
 
-# create library
-spaQR_lib: $(OBJ)
-	ar rvs $(LIBDIR)/libspaQR.a $^
 clean:
-	rm -f $(OBJDIR)/*.o spaQR
+	rm -f test_pspaQR
 

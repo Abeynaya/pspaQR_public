@@ -6,21 +6,12 @@
 #include <math.h>
 #include <cmath>
 #include <Eigen/IterativeLinearSolvers>
-#include <Eigen/SparseQR>
-#include <Eigen/SparseCholesky>
-#include <Eigen/OrderingMethods>
-#include "mmio.hpp"
+
 #include "cxxopts.hpp"
-#include "tree.h"
-#include "ptree.h"
-#include "partition.h"
-#include "util.h"
-#include "is.h"
+#include "spaQR.hpp"
 
 using namespace Eigen;
 using namespace std;
-
-typedef SparseMatrix<double, 0, int> SpMat; 
 
 int main(int argc, char* argv[]){
 
@@ -53,11 +44,11 @@ int main(int argc, char* argv[]){
         // Detail
         ("n_threads", "Number of threads", cxxopts::value<int>()->default_value("1"))
         ("verb", "Verbose printing for ttor debugging. Default 0. Takes 1,2,3", cxxopts::value<int>()->default_value("0"))
-        ("log", "TTor logging for profiling. Set 0 or 1. Default 0. ", cxxopts::value<int>()->default_value("0"))
+        ("log", "TTor logging for profiling. Set 0 or 1. Default 0. ", cxxopts::value<int>()->default_value("0"));
         // Use solvers from Eigen library
-        ("useEigenLSCG","If true, run CGLS scheme with standard diagonal preconditioner from Eigen library. Default false.", cxxopts::value<int>()->default_value("0"))
-        ("useEigenQR","If true, run SparseQR with default ordering from Eigen library. Default false.", cxxopts::value<int>()->default_value("0"))
-        ("useCholesky","If true, run SimplicialLDL^T with AMDOrdering from Eigen library. Default false.", cxxopts::value<int>()->default_value("0"));
+        // ("useEigenLSCG","If true, run CGLS scheme with standard diagonal preconditioner from Eigen library. Default false.", cxxopts::value<int>()->default_value("0"))
+        // ("useEigenQR","If true, run SparseQR with default ordering from Eigen library. Default false.", cxxopts::value<int>()->default_value("0"))
+        // ("useCholesky","If true, run SimplicialLDL^T with AMDOrdering from Eigen library. Default false.", cxxopts::value<int>()->default_value("0"));
     
 
     auto result = options.parse(argc, argv);
@@ -94,30 +85,32 @@ int main(int argc, char* argv[]){
     SpMat A = mmio::sp_mmread<double, int>(matrix);
     A.makeCompressed();
     if (A.rows() < A.cols()){
-        cout << " <<< Warning!!! nrows < ncols. Finding QR on A.transpose() instead. " << endl;
+        if (my_rank == 0) cout << " <<< Warning!!! nrows < ncols. Finding QR on A.transpose() instead. " << endl;
         SpMat T = A.transpose();
         A = T;
     }
     
     int nrows = A.rows();
     int ncols = A.cols();
-    cout << "Matrix " << matrix << " with " << nrows << " rows,  " << ncols << " columns loaded" << endl;
+    if (my_rank == 0) cout << "Matrix " << matrix << " with " << nrows << " rows,  " << ncols << " columns loaded" << endl;
 
     // Iterative method 
     bool useGMRES = (nrows == ncols) ? true : false;
     bool useCGLS = (nrows > ncols) ? true : false;
     int iterations = result["iterations"].as<int>();
     
-    bool useEigenLSCG = result["useEigenLSCG"].as<int>();
-    bool useEigenQR = result["useEigenQR"].as<int>();
-    bool useCholesky = result["useCholesky"].as<int>();
+    // bool useEigenLSCG = result["useEigenLSCG"].as<int>();
+    // bool useEigenQR = result["useEigenQR"].as<int>();
+    // bool useCholesky = result["useCholesky"].as<int>();
 
     double residual = result["res"].as<double>();
 
     if ( (!result.count("lvl"))  ) {
-        cout << "--Levels not provided" << endl;
         nlevels = ceil(log2(ncols/64));
-        cout << " Levels set to ceil(log2(ncols/64)) =  " << nlevels << endl;
+        if (my_rank == 0){
+            cout << "--Levels not provided" << endl;
+            cout << " Levels set to ceil(log2(ncols/64)) =  " << nlevels << endl;
+        }
     }
     else{
         nlevels = result["lvl"].as<int>();
@@ -152,7 +145,6 @@ int main(int argc, char* argv[]){
     D = Dentries.asDiagonal();
     A = A*D*10;
     auto pend = systime();
-    cout << "Pre-process time: " << elapsed(pstart, pend) << endl;
     
 
     int skip = (tol == 0 ? nlevels-1 : result["skip"].as<int>());
@@ -179,7 +171,7 @@ int main(int argc, char* argv[]){
     int tlog = result["log"].as<int>();
 
 
-    if (n_threads>1 && scale == 0){
+    if (my_rank == 0 && n_threads>1 && scale == 0){
         cout << "Scaling necessary for parallel spaQR" << endl;
         cout << "Setting scale to 1" << endl;
         scale = 1;
