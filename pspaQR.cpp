@@ -225,16 +225,18 @@ int main(int argc, char* argv[]){
                 }
             }
             else {
-                t.solve_nrml(A.transpose()*bcopy, x);
+                t.solve(bcopy, x);
                 timer tsolv = systime();
-                cout << "<<<<tsolv=" << elapsed(tsolv_0, tsolv) << endl;
-                cout << "One-time solve (Random b):" << endl;             
-                cout << "<<<<|A'(Ax-b)|/|A'b| : " << scientific <<  (A.transpose()*(A*x-b)).norm() / (A.transpose()*b).norm() << endl;
+                if (my_rank == 0){
+                    cout << "<<<<tsolv=" << elapsed(tsolv_0, tsolv) << endl;
+                    cout << "One-time solve (Random b):" << endl;             
+                    cout << "<<<<|A'(Ax-b)|/|A'b| : " << scientific <<  (A.transpose()*(A*x-b)).norm() / (A.transpose()*b).norm() << endl;
+                }
             }
         }
     }
     
-    
+    /*
     bool verb = true; 
     int iter = 0;
     if (!err)
@@ -281,7 +283,7 @@ int main(int argc, char* argv[]){
         //     cout << "<<<<CGLS=" << iter << endl;
         // }
     }
-    
+    */
     
     MPI_Finalize();
     return 0;  

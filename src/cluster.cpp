@@ -85,7 +85,6 @@ void Cluster::add_edgeOut_threadsafe(Cluster* n2, Eigen::MatrixXd* A){
         edgesOut.push_back(new Edge(this, n2, A)); 
     }
     else {
-        std::cout << "wtf??" << std::endl;
         if ((*found)->A21 == nullptr) {
             (*found)->A21 = A;
         } 
@@ -140,11 +139,6 @@ void Cluster::sort_edgesOut(bool reverse){
     }
 }
 
-// void Cluster::sort_edgesOut_by_rank(){
-    
-//     edgesOut.sort([](Edge* a, Edge* b){return a->n2->get_order() < b->n2->get_order();});
-    
-// }
 
 EdgeIt Cluster::find_out_edge(int n_order) {
     auto found = find_if(edgesOut.begin(), edgesOut.end(), [&n_order](Edge* e){return e->n2->get_order() == n_order;});
@@ -153,10 +147,6 @@ EdgeIt Cluster::find_out_edge(int n_order) {
 }
 
 /*Elimination*/
-// void Cluster::set_T(Eigen::MatrixXd& T_) {
-//     this->T = new Eigen::MatrixXd(0,0);
-//     *(this->T) = T_;
-// }
 void Cluster::create_T(int norder) {
     this->Tmap[norder] = new Eigen::MatrixXd(0,0);
 }
@@ -198,6 +188,31 @@ Eigen::MatrixXd* Cluster::get_Qs(){return this->Qs;}
 Eigen::MatrixXd* Cluster::get_Ts(){return this->Ts;}
 Eigen::VectorXd* Cluster::get_taus(){return this->taus;}
 
+/* Reassign */
+void Cluster::update_extra_rnorm(int n_order, Eigen::VectorXd& rnorm){
+    std::lock_guard<std::mutex> lock(mutex_cluster);
+    int extra_rows = this->rsize_org - this->csize_org;
+    assert(this->r2c.size() == extra_rows);
+    for (int i=0; i<extra_rows; ++i){
+        if (rnorm(i)>std::get<1>(r2c[i])) {
+            r2c[i] = std::make_tuple(n_order, rnorm(i));
+        }
+    }
+}
+
+void Cluster::add_extra_rows(int c_order, int istart, int nextra){
+    std::lock_guard<std::mutex> lock(mutex_add_extra);
+    extra_rows_from_cluster.push_back(std::make_tuple(c_order, istart, nextra));
+    tot_extra += nextra;
+}
+
+void Cluster::sort_extra_rows_from_cluster(){
+    std::lock_guard<std::mutex> lock(mutex_add_extra);  // safe to reuse mutex here
+    if (extra_is_sorted) return;
+    extra_rows_from_cluster.sort();
+    extra_is_sorted = true;
+}
+
 /* Sparsification  */
 void Cluster::set_Q_sp(Eigen::MatrixXd& Q_) {
     this->Q_sp = new Eigen::MatrixXd(0,0);
@@ -224,6 +239,10 @@ Eigen::VectorXd* Cluster::get_tau_sp(){return this->tau_sp;}
 void Cluster::set_size(int r, int c){
     rsize = r;
     csize = c;
+    if (merge_level == id.level()) {
+        r2c.resize(rsize-csize, std::make_tuple(order, 0.0));
+        row_perm  = Eigen::VectorXi::LinSpaced(rsize-csize, 0, rsize-csize-1);
+    }
     delete this->x;
     this->x = new Eigen::VectorXd(r);
     this->x->setZero();
@@ -317,6 +336,15 @@ void Cluster::reduce_x(Eigen::VectorXd& xc){
     std::lock_guard<std::mutex> lock(mutex_edgeIn); // NEEDED to avoid race condition
     assert(this->head().size() == xc.size());
     this->head() -= xc;
+}
+
+void Cluster::merge_x(){
+    if (this->x_ex == nullptr) return; // nothing to merge
+    int old_r = this->x->size();
+    int n_ex = this->x_ex->size();
+    this->x->conservativeResize(old_r+n_ex);
+    this->x->segment(old_r, n_ex) = *(this->x_ex);
+    delete this->x_ex;
 }
 
 

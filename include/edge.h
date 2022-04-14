@@ -16,6 +16,7 @@ struct Edge{
 		Cluster* n1;
 		Cluster* n2;
 		Eigen::MatrixXd* A21;
+		Eigen::MatrixXd* Aex;
 
 		// std::list<Cluster*> interior_deps;
 		long unsigned int interior_deps;
@@ -27,16 +28,31 @@ struct Edge{
 				assert(A->cols() == n1->cols());
 			}
 			interior_deps=0;	
+			Aex = nullptr;
 		}
 
 		Edge(Cluster* n1_, Cluster* n2_): n1(n1_), n2(n2_){
 			A21 = new Eigen::MatrixXd(0,0);
 			interior_deps=0;	
+			Aex = nullptr;
 		}
 
 		~Edge(){
 			if (A21 != nullptr){
 				delete A21;
+			}
+			if (Aex != nullptr){
+				delete Aex;
+			}
+		}
+
+		void merge(){
+			if (Aex != nullptr){
+			    // merge A21 and Aex
+			    assert(A21->cols() == Aex->cols());
+			    A21->conservativeResize(A21->rows()+Aex->rows(), Eigen::NoChange);
+			    A21->bottomRows(Aex->rows()) = *(Aex);
+			    delete Aex;
 			}
 		}
 };

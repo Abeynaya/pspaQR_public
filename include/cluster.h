@@ -157,6 +157,8 @@ private:
     int local_cstart; 
     int local_rstart;
 
+    
+
     /* Hierarchy */
     Cluster* parent; 
     ClusterID parentid;
@@ -189,8 +191,8 @@ private:
     std::mutex mutex_edgeIn;
     std::mutex mutex_edgeInFillin;
     std::mutex mutex_edgeOut;
-
-
+    std::mutex mutex_cluster;
+    std::mutex mutex_add_extra;
 
 public: 
     int rposparent; // row position in the parent
@@ -213,9 +215,16 @@ public:
 
     /* Solution to A' xt=b */
     Eigen::VectorXd* xt = nullptr; // A'xt = b
+    Eigen::VectorXd* x_ex = nullptr; // extra vector in case of rect matrices
 
     unsigned long int col_interior_deps=0;
 
+    // For rect matrices (necessary for pspaQR)
+    std::vector<std::tuple<int, double>> r2c;
+    Eigen::VectorXi row_perm; // perm of extra rows
+    std::list<std::tuple<int,int,int>> extra_rows_from_cluster;
+    int tot_extra;
+    bool extra_is_sorted;
 
 public:
     /* Methods */
@@ -229,6 +238,12 @@ public:
                 rank = csize_;
                 local_cstart = -1;
                 local_rstart = -1;
+                if (merge_level == id.level()) {
+                    r2c.resize(rsize-csize, std::make_tuple(order, 0.0));
+                    row_perm  = Eigen::VectorXi::LinSpaced(rsize-csize, 0, rsize-csize-1);
+                }
+                tot_extra = 0;
+                extra_is_sorted = false;
             };
 
     // Whether a cluster has been eliminated
@@ -315,8 +330,11 @@ public:
 
     Eigen::VectorXd* get_tau();
     Eigen::MatrixXd* get_T();
-    // Eigen::MatrixXd* get_Q();
 
+    /* Reassign */
+    void update_extra_rnorm(int, Eigen::VectorXd&);
+    void add_extra_rows(int, int, int);
+    void sort_extra_rows_from_cluster();
     /* Scaling */
     void set_Qs(Eigen::MatrixXd&);
     void set_Ts(Eigen::MatrixXd&);
@@ -352,6 +370,7 @@ public:
     void textract_vector(Eigen::VectorXd& soln);
     void textract_vector();
     void reduce_x(Eigen::VectorXd& xc);
+    void merge_x();
 
 
 
