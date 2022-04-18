@@ -236,7 +236,7 @@ int main(int argc, char* argv[]){
         }
     }
     
-    /*
+    /* 
     bool verb = true; 
     int iter = 0;
     if (!err)

@@ -30,6 +30,7 @@ bool ParTree::want_sparsify(Cluster* c) const{
     if (c->merge_lvl() < skip || c->merge_lvl() >= nlevels-2 || this->tol==0){
         return false;
     }
+    // if (c->get_id() != ClusterID(SepID(1,0), SepID(0,0), SepID(0,1))) return false;
     if (c->lvl() > c->merge_lvl()){
         SepID left = c->get_id().l;
         SepID right = c->get_id().r;
@@ -312,6 +313,8 @@ void ParTree::compute_new_edges(Cluster* snew){
                 assert(found != snew->edgesOut.end());  // Must have the edge
 
                 assert(eold->A21 != nullptr);
+                // cout << sold->get_id() << " to " << nold->get_id() << endl;
+                // cout << eold->A21->rows() << " " << nold->rows() << " " << eold->A21->cols() << " " << sold->rows() << endl;
                 assert(eold->A21->rows() == nold->rows());
                 assert(eold->A21->cols() == sold->cols());
 
@@ -362,36 +365,31 @@ void ParTree::trsm_edge(Edge* e){ // Applied on edgesOut of the cluster being sc
 
 /* Sparsification */
 void ParTree::sparsify_rrqr_only(Cluster* c){
-    // bool sparsified = true;
-    // if (c->cols() == 0) sparsified=false;
-    // else {
     if (!want_sparsify(c)) return;
     assert(c->cols() != 0);
-    vector<MatrixXd*> Apm(c->edgesInNbrSparsification.size()); // row nbrs
-    vector<MatrixXd*> Amp(c->edgesOutNbrSparsification.size()); // col nbrs
     Edge* e_self = c->self_edge();
     assert(e_self != nullptr);
 
     int spm=0;
     int smp=0;
-    int count=0;
-    for (auto& e: c->edgesInNbrSparsification){
-        Apm[count]=e->A21;
-        spm += e->A21->cols();
-        count++;
-    }
-    count=0;
-    for (auto& e: c->edgesOutNbrSparsification){
-        Amp[count] = e->A21;
-        smp += e->A21->rows();
-        count++;
-    }
+    for (auto& e: c->edgesInNbrSparsification){spm += e->A21->cols();}
+    for (auto& e: c->edgesOutNbrSparsification){assert(e->n2!=c); smp += e->A21->rows();}
 
     MatrixXd C = MatrixXd::Zero(c->cols(), spm+smp); // Block to be compressed
-    MatrixXd Apmc = Hconcatenate(Apm);
-
-    C.leftCols(smp) = Vconcatenate(Amp).transpose();
-    C.middleCols(smp, spm) = Apmc.topRows(c->cols());
+    // Concatenate Apm->topRows(c->cols()) & Amp
+    {   
+        int istart = 0;
+        for (auto& e: c->edgesOutNbrSparsification){
+            C.middleCols(istart, e->A21->rows()) = e->A21->transpose();
+            istart += e->A21->rows();
+        }
+        assert(istart == smp);
+        for (auto& e: c->edgesInNbrSparsification){
+            C.middleCols(istart, e->A21->cols()) = e->A21->topRows(c->cols());
+            istart += e->A21->cols();
+        }
+        assert(istart == smp+spm);
+    }
 
     int rank = 0;
     VectorXi jpvt = VectorXi::Zero(C.cols());
@@ -425,12 +423,67 @@ void ParTree::sparsify_rrqr_only(Cluster* c){
     c->set_Q_sp(v);
     c->set_tau_sp(h); 
     c->set_T_sp(T);
+    c->set_rank(rank); 
 
     // Change size of pivot block
-    *(e_self->A21) = MatrixXd::Identity(rank, rank);
-    c->set_rank(rank);
-    c->reset_size(c->get_rank(), c->get_rank());
+    if (square){ // only if square (otherwise we fulfill a different task)
+        *(e_self->A21) = MatrixXd::Identity(rank, rank);
+        c->reset_size(c->get_rank(), c->get_rank());
+    }
+}
 
+void ParTree::sparsify_extra(Cluster* c){
+    if (!want_sparsify(c)) return;
+    // if (c->rows() <= c->cols()) return;
+    // do_scaling before calling this function -- will not work otherwise
+    assert(this->scale == 1);
+
+    int spm=0;
+    for (auto e: c->edgesInNbrSparsification){spm += e->A21->cols();}
+
+    int extra_rows = c->rows()-c->cols();
+    MatrixXd C = MatrixXd::Zero(extra_rows, spm); // Block to be compressed 
+    // NOTE: c->rows() and c->cols() cannot be updated till both sparsify and sparsify_extra are done
+    {
+        int istart = 0;
+        for (auto e:c->edgesInNbrSparsification){
+            assert(e->A21->rows() == c->rows());
+            C.middleCols(istart, e->A21->cols()) = e->A21->bottomRows(extra_rows);
+            istart += e->A21->cols();
+        }
+        assert(spm == istart);
+    }
+    int rank=extra_rows;
+    VectorXi jpvt = VectorXi::Zero(C.cols());
+    VectorXd t= VectorXd::Zero(min(C.rows(), C.cols())); // cols > rows
+    VectorXd rii;
+    #ifdef USE_MKL
+        /* Rank revealing QR on C with rrqr function */ 
+        int bksize = min(C.cols(), max((long)3,(long)(0.05 * C.rows())));
+        laqps(&C, &jpvt, &t, tol, bksize, rank);
+        rii = C.topLeftCorner(rank, rank).diagonal();
+
+    #else
+        geqp3(&C, &jpvt, &t);
+        rii = C.diagonal();
+    #endif
+
+    rank = choose_rank(rii, this->tol);
+    assert(rank <= min(C.rows(), C.cols()));
+
+    /* Save */
+    MatrixXd v = MatrixXd(C.rows(), rank);
+    VectorXd h = VectorXd(rank);
+    MatrixXd T = MatrixXd::Zero(rank, rank);
+
+    v = C.leftCols(rank);
+    h = t.topRows(rank);
+    // do larft  
+    larft(&v, &h, &T);
+    c->set_Q_sp_ex(v);
+    c->set_tau_sp_ex(h); 
+    c->set_T_sp_ex(T);
+    c->set_row_rank(rank);
 }
 
 void ParTree::partition(SpMat& A){
@@ -991,7 +1044,9 @@ int ParTree::factorize(){
             Taskflow<Cluster*> scale_geqrt_tf(&tp, verb);
             Taskflow<Edge*> scale_larfb_trsm_tf(&tp, verb);
             /* Sparsify */
+            Taskflow<Cluster*> sparsify_extra_tf(&tp, verb);
             Taskflow<Cluster*> sparsify_rrqr_tf(&tp, verb);
+            Taskflow<Cluster*> sparsify_resize_tf(&tp, verb);
             Taskflow<Edge*> sparsify_larfb_tf(&tp, verb);
 
             
@@ -1478,9 +1533,8 @@ int ParTree::factorize(){
                     if (verb) cout << "scale_" << c->get_id() << endl;
                     if (!square){
                         c->self_edge()->merge();
-                        c->reset_size(c->self_edge()->A21->rows(), c->self_edge()->A21->cols());
+                        c->reset_size(c->self_edge()->A21->rows(), c->self_edge()->A21->cols()); // also resets row_rank and rank
                     }
-                    
                     if(want_sparsify(c)) scale_cluster(c);
                 })
                 .set_fulfill([&] (Cluster* c){
@@ -1499,6 +1553,7 @@ int ParTree::factorize(){
                     if (this->ilvl >= skip && this->ilvl < nlevels-2  && this->tol != 0){ // skip sparsify otherwise
                         // Sparsify cluster -- same rank
                         sparsify_rrqr_tf.fulfill_promise(c);
+                        if (!square) sparsify_extra_tf.fulfill_promise(c); // needed so that c->rows() and c->cols() are updated
                     }
 
                     // Fulfill deps in other ranks
@@ -1531,7 +1586,6 @@ int ParTree::factorize(){
              * Q_c, R_n from scaling */
             auto scale_larfb_2_sparsify_am = comm.make_active_msg(
                 [&] (int& n1_order, int& n2_order, view<double>& A_view, int& A_rows, int& A_cols){
-                    Cluster* n1 = get_interface(n1_order);
                     Cluster* n2 = get_interface(n2_order);
                     assert(my_rank == cluster2rank(n2));
                     MatrixXd A = Map<MatrixXd>(A_view.data(), A_rows, A_cols);
@@ -1540,6 +1594,7 @@ int ParTree::factorize(){
                     assert(found != n2->edgesInNbrSparsification.end());
                     *((*found)->A21) = A; 
                     sparsify_rrqr_tf.fulfill_promise(n2);
+                    if (!square) sparsify_extra_tf.fulfill_promise(n2);
             });
 
             scale_larfb_trsm_tf.set_mapping([&] (Edge* e){
@@ -1547,7 +1602,7 @@ int ParTree::factorize(){
                 })
                 .set_indegree([&](Edge* e){ // e->A21 = A_cn
                     unsigned long ndeps = 2+ e->interior_deps;  // from the 2 scales and ssrfbs 
-                    if ((!square) && (e->interior_deps != 0)) ndeps += 1;
+                    if ((!square) && (e->n2->col_interior_deps != 0)) ndeps += 1;
                     return ndeps; // from shift
                 })
                 .set_task([&] (Edge* e) {
@@ -1569,7 +1624,10 @@ int ParTree::factorize(){
                         sparsify_rrqr_tf.fulfill_promise(e->n1); // same cluster
                         int dest = cluster2rank(e->n2);
                         
-                        if (dest == my_rank) sparsify_rrqr_tf.fulfill_promise(e->n2);
+                        if (dest == my_rank) {
+                            sparsify_rrqr_tf.fulfill_promise(e->n2);
+                            if (!square) sparsify_extra_tf.fulfill_promise(e->n2);
+                        }
                         else {
                             int n1_order = e->n1->get_order();
                             int n2_order = e->n2->get_order();
@@ -1649,14 +1707,17 @@ int ParTree::factorize(){
                     int c_order = c->get_order();
                     int c_rank = c->get_rank();
                     if (want_sparsify(c)){
-                        int Q_rows = c->original_rows();
-                        auto Qsp_view = view<double>(c->get_Q_sp()->data(), c->original_rows()*c_rank);
+                        int Q_rows = c->get_Q_sp()->rows();
+                        assert(Q_rows == c->original_cols());
+                        auto Qsp_view = view<double>(c->get_Q_sp()->data(), Q_rows*c_rank);
                         auto Tsp_view = view<double>(c->get_T_sp()->data(), c_rank*c_rank);
 
                         for (auto& r:to_send){
                             auto edges_view = view<int>(r.second.data(), r.second.size());
                             send_sparsify_am->send(r.first, c_order, Qsp_view, Tsp_view, Q_rows, c_rank, edges_view);
                         }
+                        if (!square) sparsify_resize_tf.fulfill_promise(c); // same rank
+
                     }
                     else {
                         for (auto& r:to_send){
@@ -1673,24 +1734,153 @@ int ParTree::factorize(){
                     return 4;
                 });
 
+            auto send_sparsify_extra_am = comm.make_active_msg(
+                [&] (int& c_order, view<double>& U_data, view<double>& T_data, int& Q_rows, int& c_rank, view<int>& larfb_deps){
+                    Cluster* c = get_interface(c_order);
+                    c->set_row_rank(c_rank); // important -- needed in sparsify_larfb
+                    MatrixXd Qsp = Map<MatrixXd>(U_data.data(), Q_rows, c_rank);
+                    MatrixXd Tsp = Map<MatrixXd>(T_data.data(), c_rank, c_rank);
+                    c->set_Q_sp_ex(Qsp);
+                    c->set_T_sp_ex(Tsp);
+                    for (auto& n_order: larfb_deps){
+                        Cluster* n = get_interface(n_order);
+                        assert(cluster2rank(n)==my_rank);
+                        auto found = find_if(n->edgesOutNbrSparsification.begin(), n->edgesOutNbrSparsification.end(), 
+                                            [&c_order](Edge*e){return e->n2->get_order() == c_order;});
+                        assert(found != n->edgesOutNbrSparsification.end());
+                        sparsify_larfb_tf.fulfill_promise(*found);
+                    }
+            });
+
+            auto send_sparsify_extra_fulfill_only_am = comm.make_active_msg(
+                [&] (int& c_order, int& c_rank, view<int>& larfb_deps){
+                    Cluster* c = get_interface(c_order);
+                    c->set_row_rank(c_rank); // important -- needed in sparsify_larfb
+                   
+                    for (auto& n_order: larfb_deps){
+                        Cluster* n = get_interface(n_order);
+                        assert(cluster2rank(n)==my_rank);
+                        auto found = find_if(n->edgesOutNbrSparsification.begin(), n->edgesOutNbrSparsification.end(), 
+                                            [&c_order](Edge*e){return e->n2->get_order() == c_order;});
+                        assert(found != n->edgesOutNbrSparsification.end());
+                        sparsify_larfb_tf.fulfill_promise(*found);
+                    }
+            });
+
+            sparsify_extra_tf.set_mapping([&] (Cluster* c){
+                    return c->get_order()%ttor_threads; 
+                })
+                .set_indegree([](Cluster* c){
+                    return c->edgesInNbrSparsification.size()+1;  // larfb from scaling on rows and 1 from scaling on self
+                })
+                .set_task([&] (Cluster* c) {
+                    if(verb) cout << "sparsify_extra_rrqr_tf_" << c->get_id() << endl;
+                    if(want_sparsify(c)) sparsify_extra(c);
+                })
+                .set_fulfill([&] (Cluster* c){
+                    // Apply ormqr to rows and cols
+                    map<int, vector<int>> to_send;
+                    for (auto& ein: c->edgesInNbrSparsification){
+                        int dest = edge2rank(ein);
+                        if (dest == my_rank) sparsify_larfb_tf.fulfill_promise(ein); // Q_c^T ein->A21->bottomRows(rows-cols)
+                        else to_send[dest].push_back(ein->n1->get_order());
+                    }
+
+                    // Send to a different rank
+                    int c_order = c->get_order();
+                    int c_rank = c->get_row_rank();
+                    if (want_sparsify(c)){
+                        assert(c->get_Q_sp_ex() != nullptr);
+                        int Q_rows = c->get_Q_sp_ex()->rows();
+                        // don't use c->rows() and c->cols() as these can change before it comes here
+                        auto Qsp_view = view<double>(c->get_Q_sp_ex()->data(), Q_rows*c_rank);
+                        auto Tsp_view = view<double>(c->get_T_sp_ex()->data(), c_rank*c_rank);
+
+                        for (auto& r:to_send){
+                            auto edges_view = view<int>(r.second.data(), r.second.size());
+                            send_sparsify_extra_am->send(r.first, c_order, Qsp_view, Tsp_view, Q_rows, c_rank, edges_view);
+                        }
+                        if (!square) sparsify_resize_tf.fulfill_promise(c); // same rank
+                    }
+                    else {
+                        for (auto& r:to_send){
+                            auto edges_view = view<int>(r.second.data(), r.second.size());
+                            send_sparsify_extra_fulfill_only_am->send(r.first, c_order, c_rank, edges_view);
+                        }
+                    }
+                        
+                })
+                .set_name([](Cluster* c) {
+                    return "sparsify_extra_" + to_string(c->get_order());
+                })
+                .set_priority([&](Cluster*) {
+                    return 4;
+                });
+
+            sparsify_resize_tf.set_mapping([&] (Cluster* c){
+                    return c->get_order()%ttor_threads; 
+                })
+                .set_indegree([&](Cluster* c){
+                    assert(square == false); // comes here only for rect matrices
+                    assert(want_sparsify(c) == true); 
+                    return 2;
+                })
+                .set_task([&] (Cluster* c) {
+                    if(verb) cout << "sparsify_resize_tf_" << c->get_id() << endl;
+                    assert(this->scale == true);
+                    MatrixXd A = *(c->self_edge()->A21);
+                    int rank = c->get_rank();
+                    int row_rank = c->get_row_rank();
+                    *(c->self_edge()->A21) = MatrixXd::Zero(rank+row_rank, rank);
+                    c->self_edge()->A21->topRows(rank) = MatrixXd::Identity(rank,rank);
+                    c->reset_size(rank+row_rank, rank);
+                })
+                .set_name([](Cluster* c) {
+                    return "sparsify_resize_" + to_string(c->get_order());
+                })
+                .set_priority([&](Cluster*) {
+                    return 4;
+                });
+
             /* Apply Q_c^T A_cn and A_cn Q_n 
              * Q_c, Q_n from sparsification */
             sparsify_larfb_tf.set_mapping([&] (Edge* e){
                     return (e->n1->get_order()+e->n2->get_order())%ttor_threads;  
                 })
-                .set_indegree([](Edge*){
-                    return 2; // the sparsify on clusters c and n
+                .set_indegree([&](Edge*){
+                    return (this->square) ? 2: 3; // the sparsify on clusters c and n + 1 from extra sparsify
+                    // return 2;
                 })
                 .set_task([&] (Edge* e) {
                     if (verb) cout << "sparsify_apply_" << e->n1->get_id() << " " << e->n2->get_id() << endl;
                     Cluster* c = e->n2; 
                     Cluster* n = e->n1; 
-                    MatrixXd Aold = *e->A21;
-                    // 1. A_cn <- Q_c^T A_cn
-                    if (want_sparsify(c)) larfb(c->get_Q_sp(), c->get_T_sp(), &Aold);
-                    // 2. A_cn <- A_cn Q_n
-                    if (want_sparsify(n)) larfb_notrans_right(n->get_Q_sp(), n->get_T_sp(), &Aold);
-                    *e->A21 = Aold.block(0,0,c->get_rank(),n->get_rank());
+                    MatrixXd A = *e->A21;
+
+                    // 1. A_cn <- A_cn Q_n
+                    if (want_sparsify(n)) {
+                        larfb_notrans_right(n->get_Q_sp(), n->get_T_sp(), &A);
+                        *e->A21 = A; 
+                    }
+                    e->A21->conservativeResize(c->get_rank()+c->get_row_rank(), n->get_rank());
+
+                    if (want_sparsify(c)){
+                        MatrixXd A11 = A.block(0,0,c->get_Q_sp()->rows(),n->get_rank());
+                        MatrixXd A21 = A.block(A11.rows(), 0, A.rows()-A11.rows(), n->get_rank());
+
+                        // 2. A_cn->topRows <- Q_c^T A_cn
+                        larfb(c->get_Q_sp(), c->get_T_sp(), &A11);
+                        e->A21->topRows(c->get_rank()) = A11.topRows(c->get_rank());
+                        // assert(c->get_row_rank() == A21.rows());
+                        // e->A21->bottomRows(c->get_row_rank()) = A21;
+
+                        // 3. A_cn->bottomRows <- Q_c_ex^T A_cn
+                        if (!square) {
+                            larfb(c->get_Q_sp_ex(), c->get_T_sp_ex(), &A21);
+                            e->A21->middleRows(c->get_rank(), c->get_row_rank()) = A21.topRows(c->get_row_rank());
+                        }
+                    }
+
                 })
                 .set_name([](Edge* e) {
                     return "sparsify_apply_" + to_string(e->n1->get_order())+ "_" + to_string(e->n2->get_order());
@@ -1748,7 +1938,7 @@ int ParTree::factorize(){
                 if ( (this->ilvl >= skip && this->tol != 0) || (!this->square)){ // no need to send sizes if sparsification didn't happen
                     // this->square is needed in case reassign changes sizes
                     for (auto& sold: this->interfaces_current()){
-                        if (cluster2rank(sold) == my_rank && (sold->original_rows() != sold->rows()) ){ // Contains the most up-to-date info 
+                        if (cluster2rank(sold) == my_rank ){ // Contains the most up-to-date info  
                             // Send to all ranks
                             to_send.push_back({sold->get_order(),sold->rows(),sold->cols()});
                         }
@@ -2014,6 +2204,13 @@ void ParTree::scaleD_bwd(Cluster* c) const{
     trsv(&R, &xs, CblasUpper, CblasNoTrans, CblasNonUnit);
 }
 
+void ParTree::orthogonalD_extra_fwd(Cluster* c) const{
+    int xs_size = c->get_Q_sp_ex()->rows();
+    assert(c->get_x()->size() == c->original_cols()+xs_size);
+    Segment xs = c->get_x()->segment(c->original_cols(), xs_size);
+    ormqr_trans(c->get_Q_sp_ex(), c->get_tau_sp_ex(), &xs);
+}
+
 void ParTree::orthogonalD_fwd(Cluster* c) const{
     Segment xs = c->get_x()->segment(0,c->original_cols());
     ormqr_trans(c->get_Q_sp(), c->get_tau_sp(), &xs);
@@ -2022,6 +2219,27 @@ void ParTree::orthogonalD_fwd(Cluster* c) const{
 void ParTree::orthogonalD_bwd(Cluster* c) const{
     Segment xs = c->get_x()->segment(0,c->original_cols());
     ormqr_notrans(c->get_Q_sp(), c->get_tau_sp(), &xs);
+}
+
+void ParTree::splitD_fwd(Cluster* c) const{
+    int x1_size = c->original_cols()-c->get_rank();
+    int x2_size = c->get_x()->size()-c->original_cols();
+    VectorXd x1 = c->get_x()->middleRows(c->get_rank(), x1_size);
+    VectorXd x2 = c->get_x()->middleRows(c->original_cols(), x2_size);
+    
+    // Rearrange x1 and x2
+    c->get_x()->segment(c->get_rank(), x2_size) = x2;
+    c->get_x()->segment(c->get_rank()+x2_size, x1_size) = x1;
+}
+
+void ParTree::splitD_bwd(Cluster* c) const{
+    int x1_size = c->original_cols()-c->get_rank();
+    int x2_size = c->get_x()->size()-c->original_cols();
+    VectorXd x2 = c->get_x()->middleRows(c->get_rank(), x2_size);
+    VectorXd x1 = c->get_x()->middleRows(c->get_rank()+x2_size, x1_size);
+    // Rearrange x1 and x2
+    c->get_x()->middleRows(c->get_rank(), x1_size) = x1;
+    c->get_x()->middleRows(c->original_cols(), x2_size) = x2;
 }
 
 void ParTree::merge_fwd(Cluster* parent) const{
@@ -2045,7 +2263,9 @@ void ParTree::merge_bwd(Cluster* parent) const{
 }
 
 
-// /* For linear systems */
+/**
+ * Solve Ax = b
+ * A can be square or rectangular */
 void ParTree::solve(VectorXd b, VectorXd& x) const{
     // Permute the rhs according to this->rperm
     b = this->rperm.asPermutation().transpose()*b;
@@ -2284,7 +2504,9 @@ void ParTree::solve(VectorXd b, VectorXd& x) const{
                 // Apply Q from scaling and spars if any
                 if (want_sparsify(c)){
                     scaleD_fwd(c); // FWD scaling
+                    if (!square) orthogonalD_extra_fwd(c); // FWD extra sparsification
                     orthogonalD_fwd(c); // FWD sparsification
+                    if (!square) splitD_fwd(c);
                 }
             })
             .set_fulfill([&] (Cluster* c){
@@ -2475,6 +2697,7 @@ void ParTree::solve(VectorXd b, VectorXd& x) const{
             .set_task([&] (Cluster* c) {
                 // Apply Q from spars and R from scaling
                 if (want_sparsify(c)){
+                    if (!square) splitD_bwd(c); // BWD splitting
                     orthogonalD_bwd(c); // BWD sparsification
                     scaleD_bwd(c); // BWD scaling
                 }

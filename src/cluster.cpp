@@ -38,7 +38,11 @@ int Cluster::merge_lvl() const {return merge_level;}
 int Cluster::cols() const {return csize;}
 int Cluster::rows() const {return rsize;}
 void Cluster::set_rank(int r){rank = r;}
+void Cluster::set_row_rank(int r){row_rank = r; assert(r <= rsize-csize);}
+
 int Cluster::get_rank() const {return rank;}
+int Cluster::get_row_rank() const {return row_rank;}
+
 int Cluster::get_cstart() const {return cstart;}
 int Cluster::get_rstart() const {return rstart;}
 int Cluster::original_rows() const {return rsize_org;};
@@ -72,25 +76,11 @@ void Cluster::add_self_edge(Edge* e){
     eself = e;
 }
 void Cluster::add_edgeOut(Edge* e){edgesOut.push_back(e);}
+void Cluster::add_edge_spars_out(Edge* e){edgesOutNbrSparsification.push_back(e);}
+
 void Cluster::add_edgeOut_org(spEdge* e){edgesOut_org.push_back(e);}
 
 void Cluster::add_edgeIn(Edge* e){edgesIn.push_back(e);}
-
-void Cluster::add_edgeOutFillin(Edge* e){edgesOutFillin.push_back(e);}
-
-void Cluster::add_edgeOut_threadsafe(Cluster* n2, Eigen::MatrixXd* A){
-    std::lock_guard<std::mutex> lock(mutex_edgeOut);
-    auto found = find_if(edgesOut.begin(), edgesOut.end(), [& n2](Edge* e){return e->n2 == n2;});
-    if (found == edgesOut.end()){
-        edgesOut.push_back(new Edge(this, n2, A)); 
-    }
-    else {
-        if ((*found)->A21 == nullptr) {
-            (*found)->A21 = A;
-        } 
-        else *((*found)->A21) = *A;
-    }
-}
 
 void Cluster::add_edgeIn(Edge* e, bool is_spars_nbr){
     std::lock_guard<std::mutex> lock(mutex_edgeIn);
@@ -99,36 +89,6 @@ void Cluster::add_edgeIn(Edge* e, bool is_spars_nbr){
     if (e->n1->lvl() == e->n1->merge_lvl()) col_interior_deps++;
 }
 
-void Cluster::add_edgeInFillin(Edge* e, bool is_spars_nbr){
-    std::lock_guard<std::mutex> lock(mutex_edgeInFillin);
-    auto found = find_if(edgesInFillin.begin(), edgesInFillin.end(), [&e](Edge* ein){return ein == e;});
-    if (found == edgesInFillin.end()){
-        edgesInFillin.push_back(e);
-        if (is_spars_nbr) edgesInNbrSparsification.push_back(e);
-    }
-}
-
-void Cluster::combine_edgesOut(){
-    if (!edgesOutCombined){
-        edgesOut.insert(edgesOut.end(), edgesOutFillin.begin(), edgesOutFillin.end());
-        edgesOutCombined = true;
-    }
-}
-void Cluster::combine_edgesIn(){
-    if (!edgesInCombined){
-        edgesIn.insert(edgesIn.end(), edgesInFillin.begin(), edgesInFillin.end());
-        edgesInCombined = true;
-    }
-}
-
-void Cluster::add_edge_spars_out(Edge* e){edgesOutNbrSparsification.push_back(e);}
-void Cluster::add_edge_spars_in(Edge* e){
-    std::lock_guard<std::mutex> lock(mutex_edgeInFillin);
-    auto found = find_if(edgesInNbrSparsification.begin(), edgesInNbrSparsification.end(), [&e](Edge* ein){return ein == e;});
-    if (found == edgesInNbrSparsification.end()){
-        edgesInNbrSparsification.push_back(e);
-    }
-}
 
 void Cluster::sort_edgesOut(bool reverse){
     if (reverse){
@@ -231,6 +191,23 @@ Eigen::MatrixXd* Cluster::get_Q_sp(){return this->Q_sp;}
 Eigen::MatrixXd* Cluster::get_T_sp(){return this->T_sp;}
 Eigen::VectorXd* Cluster::get_tau_sp(){return this->tau_sp;}
 
+void Cluster::set_Q_sp_ex(Eigen::MatrixXd& Q_) {
+    this->Q_sp_ex = new Eigen::MatrixXd(0,0);
+    *(this->Q_sp_ex) = Q_;
+}
+void Cluster::set_T_sp_ex(Eigen::MatrixXd& T_) {
+    this->T_sp_ex = new Eigen::MatrixXd(0,0);
+    *(this->T_sp_ex) = T_;
+}
+void Cluster::set_tau_sp_ex(Eigen::VectorXd& t_) {
+    this->tau_sp_ex = new Eigen::VectorXd(0);
+    *(this->tau_sp_ex) = t_;
+}
+
+Eigen::MatrixXd* Cluster::get_Q_sp_ex(){return this->Q_sp_ex;}
+Eigen::MatrixXd* Cluster::get_T_sp_ex(){return this->T_sp_ex;}
+Eigen::VectorXd* Cluster::get_tau_sp_ex(){return this->tau_sp_ex;}
+
 
 /**
  *  Solving the linear system 
@@ -239,6 +216,8 @@ Eigen::VectorXd* Cluster::get_tau_sp(){return this->tau_sp;}
 void Cluster::set_size(int r, int c){
     rsize = r;
     csize = c;
+    rank = c;
+    row_rank = r-c;
     if (merge_level == id.level()) {
         r2c.resize(rsize-csize, std::make_tuple(order, 0.0));
         row_perm  = Eigen::VectorXi::LinSpaced(rsize-csize, 0, rsize-csize-1);
@@ -255,6 +234,8 @@ void Cluster::set_size(int r, int c){
 void Cluster::reset_size(int r, int c){
     rsize = r;
     csize = c;
+    rank = c;
+    row_rank = r-c;
 }
 
 void Cluster::resize_x(int r){
@@ -346,7 +327,6 @@ void Cluster::merge_x(){
     this->x->segment(old_r, n_ex) = *(this->x_ex);
     delete this->x_ex;
 }
-
 
 /* Destructor */
 Cluster::~Cluster(){

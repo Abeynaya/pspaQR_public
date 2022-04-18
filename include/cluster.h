@@ -150,6 +150,7 @@ private:
     int merge_level; // Level of merging in the cluster heirarchy
     bool eliminated;
     int rank; // to store the rank after sparsification
+    int row_rank; // to store the number of extra remaining rows after extra_sparsify
 
     // Original size of the cluster (when the cluster is formed)
     int csize_org;
@@ -182,10 +183,12 @@ private:
     Eigen::MatrixXd* Q_sp = nullptr;
     Eigen::MatrixXd* T_sp = nullptr; 
     Eigen::VectorXd* tau_sp = nullptr;
+    Eigen::MatrixXd* Q_sp_ex = nullptr;
+    Eigen::MatrixXd* T_sp_ex = nullptr; 
+    Eigen::VectorXd* tau_sp_ex = nullptr;
 
 
-    /* Solution to linear system*/
-    Eigen::VectorXd* x = nullptr; // Ax = b
+    
 
     /* Mutex for edgeIn and edgeInFillin */
     std::mutex mutex_edgeIn;
@@ -215,6 +218,8 @@ public:
 
     /* Solution to A' xt=b */
     Eigen::VectorXd* xt = nullptr; // A'xt = b
+    /* Solution to linear system*/
+    Eigen::VectorXd* x = nullptr; // Ax = b
     Eigen::VectorXd* x_ex = nullptr; // extra vector in case of rect matrices
 
     unsigned long int col_interior_deps=0;
@@ -236,6 +241,7 @@ public:
                 csize_org = csize_;
                 rsize_org = rsize_;
                 rank = csize_;
+                row_rank = rsize_- csize_;
                 local_cstart = -1;
                 local_rstart = -1;
                 if (merge_level == id.level()) {
@@ -272,7 +278,9 @@ public:
     int cols() const;
     int rows() const;
     void set_rank(int r);
+    void set_row_rank(int r);
     int get_rank() const;
+    int get_row_rank() const; 
     int get_cstart() const;
     int get_rstart() const;
     int original_rows() const;
@@ -305,15 +313,12 @@ public:
     void add_edgeOut_org(spEdge* e);
 
     void add_edgeOut(Edge* e);
-    void add_edgeOut_threadsafe(Cluster* n2, Eigen::MatrixXd* A);
+    // void add_edgeOut_threadsafe(Cluster* n2, Eigen::MatrixXd* A);
     void add_edgeIn(Edge* e);
-    void add_edgeOutFillin(Edge* e);
+    // void add_edgeOutFillin(Edge* e);
 
     void add_edgeIn(Edge* e, bool is_spars_nbr);
-    void add_edgeInFillin(Edge* e, bool is_spars_nbr = false);
-    // Combine edgesOut and edgesOutFillin
-    void combine_edgesOut();
-    void combine_edgesIn();
+    // void add_edgeInFillin(Edge* e, bool is_spars_nbr = false);
     void sort_edgesOut(bool reverse = false);
     EdgeIt find_out_edge(int);
 
@@ -347,13 +352,19 @@ public:
     void reset_size(int r, int c);
     void resize_x(int r);
     void add_edge_spars_out(Edge*);
-    void add_edge_spars_in(Edge*);
+    // void add_edge_spars_in(Edge*);
     void set_Q_sp(Eigen::MatrixXd&);
     void set_T_sp(Eigen::MatrixXd&);
     void set_tau_sp(Eigen::VectorXd&);
     Eigen::MatrixXd* get_Q_sp();
     Eigen::MatrixXd* get_T_sp();
     Eigen::VectorXd* get_tau_sp();
+    void set_Q_sp_ex(Eigen::MatrixXd&);
+    void set_T_sp_ex(Eigen::MatrixXd&);
+    void set_tau_sp_ex(Eigen::VectorXd&);
+    Eigen::MatrixXd* get_Q_sp_ex();
+    Eigen::MatrixXd* get_T_sp_ex();
+    Eigen::VectorXd* get_tau_sp_ex();
 
     /* Solution to linear system */
     Segment head(); // return the first this->get_ncols() size of x
@@ -371,8 +382,6 @@ public:
     void textract_vector();
     void reduce_x(Eigen::VectorXd& xc);
     void merge_x();
-
-
 
     /* Destructor */
     ~Cluster();

@@ -452,10 +452,10 @@ void Tree::update_edges(Cluster* snew){
     // Allocate memory and create new edges
     for (auto n: snew->cnbrs){
         Edge* e = add_edge(snew, n);
-        if (snew->lvl()> this->ilvl+1 && n->lvl()> this->ilvl+1 && snew != n){
-            snew->add_edge_spars_out(e);
-            n->add_edge_spars_in(e);
-        }
+        // if (snew->lvl()> this->ilvl+1 && n->lvl()> this->ilvl+1 && snew != n){
+        //     snew->add_edge_spars_out(e);
+        //     n->add_edge_spars_in(e);
+        // }
         if (snew==n){
             snew->add_self_edge(e);
         }
@@ -814,10 +814,10 @@ void Tree::assemble(SpMat& A){
                 self->add_self_edge(e);
             }
 
-            if (self->lvl()>0 && nbr->lvl()>0 && self != nbr){
-                self->add_edge_spars_out(e);
-                nbr->add_edge_spars_in(e);
-            }
+            // if (self->lvl()>0 && nbr->lvl()>0 && self != nbr){
+            //     self->add_edge_spars_out(e);
+            //     nbr->add_edge_spars_in(e);
+            // }
         }
 
         self->sort_edgesOut();
@@ -1313,6 +1313,7 @@ void Tree::sparsify_extra(Cluster* c){
     if (c->cols() == 0) return;
     if (c->rows() <= c->cols()) return;
     // do_scaling before calling this function -- will not work otherwise
+    assert(this->scale == 1);
     vector<MatrixXd*> Apm;
 
     int spm=0;

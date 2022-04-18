@@ -91,6 +91,8 @@ private:
 	// Methods for sparsification
 	int n_deps_sparsification(Cluster*);
 	void sparsify_rrqr_only(Cluster*);
+	void sparsify_extra(Cluster*);
+
 
 	// Merge
 	void compute_new_edges(Cluster*);
@@ -104,8 +106,11 @@ private:
 	void trsv_bwd(Cluster*) const;
 	void scaleD_fwd(Cluster*) const;
 	void scaleD_bwd(Cluster*) const;
+	void orthogonalD_extra_fwd(Cluster*) const;
 	void orthogonalD_fwd(Cluster*) const;
 	void orthogonalD_bwd(Cluster*) const;
+	void splitD_fwd(Cluster*) const;
+	void splitD_bwd(Cluster*) const;
 	void merge_fwd(Cluster*) const;
 	void merge_bwd(Cluster*) const;
 
