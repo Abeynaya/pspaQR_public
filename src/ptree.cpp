@@ -1929,6 +1929,28 @@ int ParTree::factorize(){
         if (this->ilvl < nlevels-1)
         {
             {
+                // Free some memory
+                for (auto& c: this->interiors_current()){
+                    // if (cluster2rank(c) != my_rank){
+                        // if (c->self_edge()->A21) *c->self_edge()->A21 ;
+                        // if (c->get_T(c->get_order())) delete c->get_T(c->get_order());
+                    // }
+                }
+                if (this->ilvl >= skip && this->tol != 0){
+                    for (auto& c: this->interfaces_current()){
+                        if (cluster2rank(c) != my_rank){
+                            if (c->get_Qs()) delete c->get_Qs();
+                            if (c->get_Ts()) delete c->get_Ts();
+                            if (c->get_taus()) delete c->get_taus();
+
+                            if (c->get_Q_sp()) delete c->get_Q_sp();
+                            if (c->get_T_sp()) delete c->get_T_sp();
+                            if (c->get_tau_sp()) delete c->get_tau_sp();
+                        }
+                    }
+                }
+            }
+            {
                 // Set all interiors to eliminated -- important to not interfere with the merging process
                 for (auto& c: this->interiors_current()){
                     c->set_eliminated();
@@ -2176,19 +2198,6 @@ void ParTree::QR_tsqrt_fwd(Edge* e) const{
 void ParTree::trsv_bwd(Cluster* c) const{
     Segment xs = c->get_x()->segment(0, c->cols());
     MatrixXd R = c->self_edge()->A21->topRows(xs.size()); // correct when using geqrt
-    trsv(&R, &xs, CblasUpper, CblasNoTrans, CblasNonUnit); 
-}
-
-void ParTree::QR_bwd(Cluster* c) const{
-    int i=0;
-    Segment xs = c->get_x()->segment(0, c->cols());
-    for (auto& e: c->edgesIn){
-        int s = e->A21->cols();
-        xs -= (e->A21->topRows(c->cols()))*(e->n1->get_x()->segment(0, s)); 
-        ++i;    
-    }
-    MatrixXd R = c->self_edge()->A21->topRows(xs.size()); // correct when using geqrt
-    // MatrixXd R = c->get_Q()->topRows(xs.size()); // used this in the earlier implementation
     trsv(&R, &xs, CblasUpper, CblasNoTrans, CblasNonUnit); 
 }
 
