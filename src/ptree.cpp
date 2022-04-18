@@ -1933,12 +1933,16 @@ int ParTree::factorize(){
                 for (auto& c: this->interiors_current()){
                     for (auto e: c->edgesIn){
                         if (cluster2rank(e->n1) == my_rank){
-                            e->A21->conservativeResize(c->original_cols(), NoChange);
+                            e->A21->conservativeResize(c->original_cols(), NoChange); // conservativeResize important
                         }
                     }
-                    if (cluster2rank(c) != my_rank){
-                        if (c->self_edge()->A21) c->self_edge()->A21->conservativeResize(0,0) ;
-                        // if (c->get_T(c->get_order())) delete c->get_T(c->get_order());
+                    for (auto e: c->edgesOut){
+                        if (cluster2rank(e->n2) != my_rank){
+                            if(e->A21 != nullptr) {
+                                e->A21->resize(0,0); 
+                                delete c->get_T(e->n2->get_order());
+                            }
+                        }
                     }
                 }
                 if (this->ilvl >= skip && this->tol != 0){
