@@ -2013,6 +2013,7 @@ int ParTree::factorize(){
                                     int n1_order = e->n1->get_order();
                                     int n2_order = e->n2->get_order();
                                     send_edge_am->send(dest, n1_order, n2_order, A_rows, A_cols, A_view);
+                                    delete e->A21;
                                 }
                             }
                         }
