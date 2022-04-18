@@ -1931,10 +1931,15 @@ int ParTree::factorize(){
             {
                 // Free some memory
                 for (auto& c: this->interiors_current()){
-                    // if (cluster2rank(c) != my_rank){
-                        // if (c->self_edge()->A21) *c->self_edge()->A21 ;
+                    for (auto e: c->edgesIn){
+                        if (cluster2rank(e->n1) == my_rank){
+                            e->A21->conservativeResize(c->original_cols(), NoChange);
+                        }
+                    }
+                    if (cluster2rank(c) != my_rank){
+                        if (c->self_edge()->A21) c->self_edge()->A21->conservativeResize(0,0) ;
                         // if (c->get_T(c->get_order())) delete c->get_T(c->get_order());
-                    // }
+                    }
                 }
                 if (this->ilvl >= skip && this->tol != 0){
                     for (auto& c: this->interfaces_current()){
