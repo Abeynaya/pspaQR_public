@@ -36,7 +36,7 @@ find_package(Eigen3 3.3 REQUIRED)
 add_definitions(-DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE) 
 if(SPAQR_USE_MKL)
     add_definitions(-DUSE_MKL -DEIGEN_USE_MKL_ALL)
-endif 
+endif() 
 
 ### Setup compile flags
 enable_language(CXX)
