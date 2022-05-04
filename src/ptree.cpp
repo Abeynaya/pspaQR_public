@@ -1940,7 +1940,7 @@ int ParTree::factorize(){
                         if (cluster2rank(e->n2) != my_rank){
                             if(e->A21 != nullptr) {
                                 e->A21->resize(0,0); 
-                                delete c->get_T(e->n2->get_order());
+                                // delete c->get_T(e->n2->get_order());
                             }
                         }
                     }
@@ -2141,42 +2141,6 @@ int ParTree::factorize(){
 /**
  * Solve
  **/
-void ParTree::QR_fwd(Cluster* c) const{
-    // geqrt on self_edge->A21
-    MatrixXd* cc = c->self_edge()->A21;
-    int cx_size = cc->rows();
-    Segment xc = c->get_x()->segment(0,cx_size);
-    larfb(cc, c->get_T(c->get_order()), &xc);
-    
-
-    // tsqrt on all other c->edgesOut
-    for (auto& e: c->edgesOut){
-        Cluster* n = e->n2;
-        if (n != c){
-            MatrixXd* nc = e->A21;
-            int nrows = nc->rows(); // will not be affected even if e->n2->rows() change b/c of sparsification
-            int ncols = 1;
-            int k = cc->cols();
-            int nb = min(32, k);
-            Segment xn = n->get_x()->segment(0,nrows);
-
-            // use directly from mkl_lapack.h -- routine from mkl_lapacke.h doesn't work correctly
-            char side = 'L';
-            char trans = 'T';
-            int l=0;
-            VectorXd work = VectorXd::Zero(ncols*nb);
-            int info=-1;
-            dtpmqrt_(&side, &trans, &nrows, &ncols, &k, &l, &nb, 
-                                        nc->data(), &nrows, 
-                                        c->get_T(n->get_order())->data(), &nb,
-                                        xc.data(), &cx_size,
-                                        xn.data(), &nrows,
-                                        work.data(), &info);
-            assert(info == 0);
-        }
-    }
-}
-
 void ParTree::QR_tsqrt_fwd(Edge* e) const{
     Cluster* c = e->n1;
     Cluster* n = e->n2;
