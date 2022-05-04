@@ -20,7 +20,6 @@ set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 if(SPAQR_USE_MKL)
     set(BLAS_DIR $ENV{MKLROOT})
     set(BLA_VENDOR "Intel10_64lp")
-    add_definitions(-DUSE_MKL -DEIGEN_USE_MKL_ALL)
     message(STATUS "Using MKL")
 else()
     set(BLA_VENDOR Open)
@@ -35,6 +34,9 @@ find_package(LAPACKE REQUIRED)
 set(ENV{EIGEN3_ROOT_DIR} ${SOFTROOT}/eigen)
 find_package(Eigen3 3.3 REQUIRED)
 add_definitions(-DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE) 
+if(SPAQR_USE_MKL)
+    add_definitions(-DUSE_MKL -DEIGEN_USE_MKL_ALL)
+endif 
 
 ### Setup compile flags
 enable_language(CXX)
