@@ -53,7 +53,7 @@ DEPS := $(wildcard $(INCDIR)/*.h)
 OBJ := $(patsubst $(INCDIR)/%.h,$(OBJDIR)/%.o,$(DEPS))
 
 TTOROBJ := $(wildcard $(TTORLIB)/*.o)
-all: spaQR 
+all: spaQR spaQR_lib 
 
 # Tests
 $(OBJDIR)/%.o: %.cpp $(DEPS) 
@@ -69,8 +69,8 @@ spaQR: pspaQR.cpp $(OBJ) $(TTOROBJ)
 .PHONY: clean
 
 # create library
-# spaQR_lib: $(OBJ)
-# 	ar rvs $(LIBDIR)/libspaQR.a $^
+spaQR_lib: $(OBJ)
+	ar rvs $(LIBDIR)/libspaQR.a $^
 clean:
 	rm -f $(OBJDIR)/*.o spaQR
 
