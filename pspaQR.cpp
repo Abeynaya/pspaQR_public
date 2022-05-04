@@ -236,7 +236,7 @@ int main(int argc, char* argv[]){
         }
     }
     
-    /* 
+    
     bool verb = true; 
     int iter = 0;
     if (!err)
@@ -283,7 +283,7 @@ int main(int argc, char* argv[]){
         //     cout << "<<<<CGLS=" << iter << endl;
         // }
     }
-    */
+    
     
     MPI_Finalize();
     return 0;  
