@@ -26,7 +26,7 @@
 #include "toperations.h"
 #include "profile.h"
 #include "tree.h"
-#include "tasktorrent.hpp"
+#include "tasktorrent/tasktorrent.hpp"
 
 typedef std::array<int,3> int3;
 typedef std::array<Edge*,2> pEdge2;
