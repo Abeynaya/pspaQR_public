@@ -140,15 +140,15 @@ void rmap2cmap(SpMat& A, vector<ClusterID>& cmap, vector<ClusterID>& rmap, int u
         if (use_matching)
             bipartite_row_matching(A, cmap, rmap, false);
         else {
-            cout << "Proceeding by matching row i to col i ..." << endl;
-            cout << "Set --hsl 1 if you want to use bipartite matching routine" << endl;
+            // cout << "Proceeding by matching row i to col i ..." << endl;
+            // cout << "Set --hsl 1 if you want to use bipartite matching routine" << endl;
             for (int i=0; i < ncols; ++i){
                 cmap[i] = rmap[i];
             }
         }
     #else 
-        cout << "May need HSL bipartite matching routine to work correctly." << endl;
-        cout << "Proceeding by matching row i to col i ..." << endl;
+        // cout << "May need HSL bipartite matching routine to work correctly." << endl;
+        // cout << "Proceeding by matching row i to col i ..." << endl;
         cmap = rmap;
         for (int i=0; i < ncols; ++i){
             cmap[i] = rmap[i];
@@ -281,7 +281,7 @@ void bissect_geo(vector<int> &colptr, vector<int> &rowval, vector<int> &dofs, ve
 /* Infer Separators */
 vector<ClusterID> GeometricPartitionAtA(SpMat& A, int nlevels, MatrixXd* Xcoo, int use_matching){
     SpMat AtA = A.transpose()*A;
-
+    AtA.makeCompressed();
     int c = AtA.cols();
     int r = AtA.rows();
     vector<int> parts(c);
@@ -325,6 +325,7 @@ vector<ClusterID> GeometricPartitionAtA(SpMat& A, int nlevels, MatrixXd* Xcoo, i
                     }
                     if(sep){
                         cmap[i].self=SepID(l,pi/2);
+                        cmap[i].section = parts[i];
                     }
                 }
             }
@@ -337,6 +338,7 @@ vector<ClusterID> GeometricPartitionAtA(SpMat& A, int nlevels, MatrixXd* Xcoo, i
             cmap[i].self = SepID(0,parts[i]);
             cmap[i].l = SepID(0,parts[i]);
             cmap[i].r = SepID(0,parts[i]);
+            cmap[i].section = parts[i];
         }
     }
 
@@ -369,6 +371,7 @@ void partition_metis_RB(SpMat& A, int nlevels, vector<int>& parts){
 
 vector<ClusterID> MetisPartition(SpMat& A, int nlevels){
     SpMat AtA = A.transpose()*A;
+    AtA.makeCompressed();
     int c = A.cols();
     int r = A.rows();
     vector<int> parts(c);
@@ -399,6 +402,7 @@ vector<ClusterID> MetisPartition(SpMat& A, int nlevels){
                     }
                     if(sep){
                         cmap[i].self=SepID(l,pi/2);
+                        cmap[i].section = parts[i];
                     }
                 }
             }
@@ -411,6 +415,7 @@ vector<ClusterID> MetisPartition(SpMat& A, int nlevels){
             cmap[i].self = SepID(0,parts[i]);
             cmap[i].l = SepID(0,parts[i]);
             cmap[i].r = SepID(0,parts[i]);
+            cmap[i].section = parts[i];
         }
     }
 
@@ -418,7 +423,9 @@ vector<ClusterID> MetisPartition(SpMat& A, int nlevels){
     return cmap;
 }
 #else
-/* HyperGraph Partition*/
+cout << "HYPERGRAPH OPTION DISABLED" << endl;
+/* 
+//HyperGraph Partition 
 void partition_patoh(SpMat& A, int nlevels, vector<int>& parts){
     int nrows = A.rows();
     int ncols = A.cols(); 
@@ -497,6 +504,7 @@ vector<ClusterID> HypergraphPartition(SpMat& A, int nlevels){
     getInterfacesUsingA_HUND(A, nlevels, cmap, parts);
     return cmap;
 }
+*/
 #endif
 
 
@@ -507,6 +515,7 @@ void getInterfacesUsingA(SpMat& A, int nlevels, vector<ClusterID>& cmap, vector<
     int nrows = A.rows();
 
     SpMat At = A.transpose();
+    At.makeCompressed();
     for(int i = 0; i < nrows; i++) {
         SepID self = rmap[i].self;
         // If it's a separator row
@@ -583,7 +592,7 @@ void getInterfacesUsingA_HUND(SpMat& A, int nlevels, vector<ClusterID>& cmap, ve
     assert(cmap.size() == A.cols());
     int c = A.cols();
     SpMat At = A.transpose();
-
+    At.makeCompressed();
     // Group together separators using distance 2 neighbors (or dist 1 nbrs in A'*A)
     // vector<tuple<ClusterID, ClusterID>> interfaces(c);
     for (int i=0; i<c; ++i){

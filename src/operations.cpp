@@ -24,8 +24,12 @@ void QR::fwd(){
 			++i;
 		}
 	}
+	cout << c->get_id() << endl << xc << endl << endl;
 
 	larfb(&Q, c->get_T(), &xc);
+	cout << c->get_id() << endl << xc << endl << endl;
+
+
 	curr_row = 0;
 	i=0;
 	for (auto e: c->edgesOut){
@@ -36,7 +40,6 @@ void QR::fwd(){
 			++i;
 		}
 	}
-	// cout << "qr_f " << xc << endl << endl;
 
 }
 
@@ -60,14 +63,11 @@ void QR::bwd(){
 
 /* Reassign rows */
 void Reassign::fwd(){
-	// cout << c->get_id() << " " << n->get_id() << endl;
 	assert(indices.size() == nrows);
 	for (int i= nstart; i < nstart+nrows; ++i){
 		// n->get_x()->segment(i,1) = c->get_x()->segment(indices[i-nstart],1);
 		(*n->get_x())[i] = (*c->get_x())[indices[i-nstart]];
-
 	}
-
 }
 
 /* Scaling */

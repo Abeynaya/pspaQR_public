@@ -9,14 +9,28 @@
 #include <set>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 #include <assert.h>
 #include <mutex>
 #include "util.h"
 
 typedef Eigen::SparseMatrix<double, 0, int> SpMat;
-
 struct Edge;
+struct spEdge;
 
+// struct Cluster;
+typedef std::list<Edge*>::iterator EdgeIt;
+
+// template<>
+// struct std::hash<Cluster*>
+// {
+//     std::size_t operator()(Cluster* const& c) const noexcept
+//     {
+//         std::size_t seed = 0;
+//         hash_combine(seed,c->get_order());
+//         return seed;
+//     }
+// };
 /*Separator ID: gives level and separator index
   in that level
 */
@@ -133,12 +147,18 @@ private:
     int rsize; // number of rows assosciated with the cluster
     ClusterID id; 
     int order; // Elimination order
+    int merge_level; // Level of merging in the cluster heirarchy
     bool eliminated;
     int rank; // to store the rank after sparsification
+    int row_rank; // to store the number of extra remaining rows after extra_sparsify
 
     // Original size of the cluster (when the cluster is formed)
     int csize_org;
     int rsize_org;
+    int local_cstart; 
+    int local_rstart;
+
+    
 
     /* Hierarchy */
     Cluster* parent; 
@@ -163,49 +183,73 @@ private:
     Eigen::MatrixXd* Q_sp = nullptr;
     Eigen::MatrixXd* T_sp = nullptr; 
     Eigen::VectorXd* tau_sp = nullptr;
+    Eigen::MatrixXd* Q_sp_ex = nullptr;
+    Eigen::MatrixXd* T_sp_ex = nullptr; 
+    Eigen::VectorXd* tau_sp_ex = nullptr;
 
 
-    /* Solution to linear system*/
-    Eigen::VectorXd* x = nullptr; // Ax = b
+    
 
     /* Mutex for edgeIn and edgeInFillin */
     std::mutex mutex_edgeIn;
     std::mutex mutex_edgeInFillin;
-
+    std::mutex mutex_edgeOut;
+    std::mutex mutex_cluster;
+    std::mutex mutex_add_extra;
 
 public: 
     int rposparent; // row position in the parent
     int cposparent; // column position in the parent
-    std::set<Cluster*> children;
-    std::set<Cluster*> rsparsity; 
+    std::list<Cluster*> children; // make it a list because order matters in pspaQR (may not really matter)
+    std::unordered_set<Cluster*> rsparsity; 
+    std::unordered_set<Cluster*> dist2connxs; 
 
     std::set<Cluster*> cnbrs; // neigbors including self
     std::set<Cluster*> rnbrs; // neigbors including self
     std::list<Edge*> edgesOut;
+    std::list<spEdge*> edgesOut_org; // Original pieces of the permuted matrix (matrix stored in sparse format)
+
     std::list<Edge*> edgesIn;
     std::list<Edge*> edgesOutFillin;
     std::list<Edge*> edgesInFillin;
 
     std::list<Edge*> edgesOutNbrSparsification;
     std::list<Edge*> edgesInNbrSparsification;
-    std::set<Cluster*> interior_connxs;
-    // std::unordered_map<int, std::list<Edge*>> interiors2edges; // use unordered_map instead of map -- makes a significant difference
 
     /* Solution to A' xt=b */
     Eigen::VectorXd* xt = nullptr; // A'xt = b
+    /* Solution to linear system*/
+    Eigen::VectorXd* x = nullptr; // Ax = b
+    Eigen::VectorXd* x_ex = nullptr; // extra vector in case of rect matrices
 
+    unsigned long int col_interior_deps=0;
 
+    // For rect matrices (necessary for pspaQR)
+    std::vector<std::tuple<int, double>> r2c;
+    Eigen::VectorXi row_perm; // perm of extra rows
+    std::list<std::tuple<int,int,int>> extra_rows_from_cluster;
+    int tot_extra;
+    bool extra_is_sorted;
 
 public:
     /* Methods */
-    Cluster(int cstart_, int csize_, int rstart_, int rsize_, ClusterID id_, int order_) :
-            cstart(cstart_), csize(csize_), rstart(rstart_), rsize(rsize_), id(id_), order(order_), eliminated(false)
+    Cluster(int cstart_, int csize_, int rstart_, int rsize_, ClusterID id_, int order_, int merge_lvl_) :
+            cstart(cstart_), csize(csize_), rstart(rstart_), rsize(rsize_), id(id_), order(order_), merge_level(merge_lvl_), eliminated(false)
             {
                 assert(rstart >= 0);
                 set_size(rsize_, csize_);
                 csize_org = csize_;
                 rsize_org = rsize_;
                 rank = csize_;
+                row_rank = rsize_- csize_;
+                local_cstart = -1;
+                local_rstart = -1;
+                if (merge_level == id.level()) {
+                    r2c.resize(rsize-csize, std::make_tuple(order, 0.0));
+                    row_perm  = Eigen::VectorXi::LinSpaced(rsize-csize, 0, rsize-csize-1);
+                }
+                tot_extra = 0;
+                extra_is_sorted = false;
             };
 
     // Whether a cluster has been eliminated
@@ -214,7 +258,6 @@ public:
     }
     // Set clusters as eliminated
     void set_eliminated() {
-       assert(! eliminated);
        eliminated = true;
     }
 
@@ -230,21 +273,31 @@ public:
     bool is_twin(Cluster* n); // is n the other part of the cluster
 
     int get_order() const; 
-    int get_level() const; 
+    int lvl() const; 
+    int merge_lvl() const;
     int cols() const;
     int rows() const;
     void set_rank(int r);
+    void set_row_rank(int r);
     int get_rank() const;
+    int get_row_rank() const; 
     int get_cstart() const;
     int get_rstart() const;
     int original_rows() const;
     int original_cols() const;
     void set_org(int r, int c);
 
+    void set_local_cstart(int);
+    void set_local_rstart(int);
+    int cstart_local();
+    int rstart_local();
+
+
     ClusterID get_id () const;
     SepID get_sepID();
 
     int part();
+    int section();
 
     /*Heirarchy*/
     Cluster* get_parent();
@@ -252,37 +305,40 @@ public:
     void set_parentid(ClusterID cid);
     void set_parent(Cluster* p);
     void add_children(Cluster* c);
+    void sort_children();
 
     /* Edges */
     Edge* self_edge();
     void add_self_edge(Edge*);
+    void add_edgeOut_org(spEdge* e);
 
     void add_edgeOut(Edge* e);
+    // void add_edgeOut_threadsafe(Cluster* n2, Eigen::MatrixXd* A);
     void add_edgeIn(Edge* e);
-    void add_edgeOutFillin(Edge* e);
+    // void add_edgeOutFillin(Edge* e);
 
     void add_edgeIn(Edge* e, bool is_spars_nbr);
-    void add_edgeInFillin(Edge* e, bool is_spars_nbr = false);
-    void add_interior_connx(Cluster*);
-    // Combine edgesOut and edgesOutFillin
-    void combine_edgesOut();
-    void combine_edgesIn();
     void sort_edgesOut(bool reverse = false);
+    EdgeIt find_out_edge(int);
 
     /*Elimination*/
-    void set_Q(Eigen::MatrixXd&);
-    void set_tau(Eigen::VectorXd&);
-    void set_T(Eigen::MatrixXd&);
     void create_T(int);
     void set_T(int, Eigen::MatrixXd&); 
-    void set_tau(int, int);
+    void set_tau(int, int); // Needed for sequential implementation
+    Eigen::MatrixXd* get_T(int);
+    void set_size(int r, int c);
+    // void set_Q(Eigen::MatrixXd&);
+    // void set_tau(Eigen::VectorXd&);
+    void set_T(Eigen::MatrixXd&);
+    
+
     Eigen::VectorXd* get_tau();
     Eigen::MatrixXd* get_T();
-    Eigen::MatrixXd* get_T(int);
 
-    Eigen::MatrixXd* get_Q();
-    void set_size(int r, int c);
-
+    /* Reassign */
+    void update_extra_rnorm(int, Eigen::VectorXd&);
+    void add_extra_rows(int, int, int);
+    void sort_extra_rows_from_cluster();
     /* Scaling */
     void set_Qs(Eigen::MatrixXd&);
     void set_Ts(Eigen::MatrixXd&);
@@ -295,13 +351,19 @@ public:
     void reset_size(int r, int c);
     void resize_x(int r);
     void add_edge_spars_out(Edge*);
-    void add_edge_spars_in(Edge*);
+    // void add_edge_spars_in(Edge*);
     void set_Q_sp(Eigen::MatrixXd&);
     void set_T_sp(Eigen::MatrixXd&);
     void set_tau_sp(Eigen::VectorXd&);
     Eigen::MatrixXd* get_Q_sp();
     Eigen::MatrixXd* get_T_sp();
     Eigen::VectorXd* get_tau_sp();
+    void set_Q_sp_ex(Eigen::MatrixXd&);
+    void set_T_sp_ex(Eigen::MatrixXd&);
+    void set_tau_sp_ex(Eigen::VectorXd&);
+    Eigen::MatrixXd* get_Q_sp_ex();
+    Eigen::MatrixXd* get_T_sp_ex();
+    Eigen::VectorXd* get_tau_sp_ex();
 
     /* Solution to linear system */
     Segment head(); // return the first this->get_ncols() size of x
@@ -317,8 +379,8 @@ public:
     void extract_vector(Eigen::VectorXd& soln);
     void textract_vector(Eigen::VectorXd& soln);
     void textract_vector();
-
-
+    void reduce_x(Eigen::VectorXd& xc);
+    void merge_x();
 
     /* Destructor */
     ~Cluster();

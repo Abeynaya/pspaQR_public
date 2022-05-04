@@ -6,26 +6,22 @@
 #include <math.h>
 #include <cmath>
 #include <Eigen/IterativeLinearSolvers>
-#include <Eigen/SparseQR>
-#include <Eigen/SparseCholesky>
-#include <Eigen/OrderingMethods>
-#include "mmio.hpp"
+
 #include "cxxopts.hpp"
-#include "tree.h"
-#include "ptree.h"
-#include "partition.h"
-#include "util.h"
-#include "is.h"
+#include "spaQR.hpp"
 
 using namespace Eigen;
 using namespace std;
 
-typedef SparseMatrix<double, 0, int> SpMat; 
-
 int main(int argc, char* argv[]){
+
+    int req = MPI_THREAD_FUNNELED;
+    int prov = -1;
+    MPI_Init_thread(NULL, NULL, req, &prov);
+    const int my_rank = ttor::comm_rank();
   
-     cxxopts::Options options("spaQR", "Sparsified QR for general sparse matrices");
-     options.add_options()
+    cxxopts::Options options("spaQR", "Sparsified QR for general sparse matrices");
+    options.add_options()
         ("help", "Print help")
         ("m,matrix", "Matrix file in martrix market format", cxxopts::value<string>())
         ("l,lvl","Number of levels", cxxopts::value<int>())
@@ -48,11 +44,11 @@ int main(int argc, char* argv[]){
         // Detail
         ("n_threads", "Number of threads", cxxopts::value<int>()->default_value("1"))
         ("verb", "Verbose printing for ttor debugging. Default 0. Takes 1,2,3", cxxopts::value<int>()->default_value("0"))
-        ("log", "TTor logging for profiling. Set 0 or 1. Default 0. ", cxxopts::value<int>()->default_value("0"))
+        ("log", "TTor logging for profiling. Set 0 or 1. Default 0. ", cxxopts::value<int>()->default_value("0"));
         // Use solvers from Eigen library
-        ("useEigenLSCG","If true, run CGLS scheme with standard diagonal preconditioner from Eigen library. Default false.", cxxopts::value<int>()->default_value("0"))
-        ("useEigenQR","If true, run SparseQR with default ordering from Eigen library. Default false.", cxxopts::value<int>()->default_value("0"))
-        ("useCholesky","If true, run SimplicialLDL^T with AMDOrdering from Eigen library. Default false.", cxxopts::value<int>()->default_value("0"));
+        // ("useEigenLSCG","If true, run CGLS scheme with standard diagonal preconditioner from Eigen library. Default false.", cxxopts::value<int>()->default_value("0"))
+        // ("useEigenQR","If true, run SparseQR with default ordering from Eigen library. Default false.", cxxopts::value<int>()->default_value("0"))
+        // ("useCholesky","If true, run SimplicialLDL^T with AMDOrdering from Eigen library. Default false.", cxxopts::value<int>()->default_value("0"));
     
 
     auto result = options.parse(argc, argv);
@@ -87,32 +83,34 @@ int main(int argc, char* argv[]){
 
     // Load matrix
     SpMat A = mmio::sp_mmread<double, int>(matrix);
-
+    A.makeCompressed();
     if (A.rows() < A.cols()){
-        cout << " <<< Warning!!! nrows < ncols. Finding QR on A.transpose() instead. " << endl;
+        if (my_rank == 0) cout << " <<< Warning!!! nrows < ncols. Finding QR on A.transpose() instead. " << endl;
         SpMat T = A.transpose();
         A = T;
     }
     
     int nrows = A.rows();
     int ncols = A.cols();
-    cout << "Matrix " << matrix << " with " << nrows << " rows,  " << ncols << " columns loaded" << endl;
+    if (my_rank == 0) cout << "Matrix " << matrix << " with " << nrows << " rows,  " << ncols << " columns loaded" << endl;
 
     // Iterative method 
     bool useGMRES = (nrows == ncols) ? true : false;
     bool useCGLS = (nrows > ncols) ? true : false;
     int iterations = result["iterations"].as<int>();
     
-    bool useEigenLSCG = result["useEigenLSCG"].as<int>();
-    bool useEigenQR = result["useEigenQR"].as<int>();
-    bool useCholesky = result["useCholesky"].as<int>();
+    // bool useEigenLSCG = result["useEigenLSCG"].as<int>();
+    // bool useEigenQR = result["useEigenQR"].as<int>();
+    // bool useCholesky = result["useCholesky"].as<int>();
 
     double residual = result["res"].as<double>();
 
     if ( (!result.count("lvl"))  ) {
-        cout << "--Levels not provided" << endl;
         nlevels = ceil(log2(ncols/64));
-        cout << " Levels set to ceil(log2(ncols/64)) =  " << nlevels << endl;
+        if (my_rank == 0){
+            cout << "--Levels not provided" << endl;
+            cout << " Levels set to ceil(log2(ncols/64)) =  " << nlevels << endl;
+        }
     }
     else{
         nlevels = result["lvl"].as<int>();
@@ -147,7 +145,6 @@ int main(int argc, char* argv[]){
     D = Dentries.asDiagonal();
     A = A*D*10;
     auto pend = systime();
-    cout << "Pre-process time: " << elapsed(pstart, pend) << endl;
     
 
     int skip = (tol == 0 ? nlevels-1 : result["skip"].as<int>());
@@ -174,7 +171,7 @@ int main(int argc, char* argv[]){
     int tlog = result["log"].as<int>();
 
 
-    if (n_threads>1 && scale == 0){
+    if (my_rank == 0 && n_threads>1 && scale == 0){
         cout << "Scaling necessary for parallel spaQR" << endl;
         cout << "Setting scale to 1" << endl;
         scale = 1;
@@ -192,86 +189,19 @@ int main(int argc, char* argv[]){
     t.set_verbose(verbose);
     t.set_ttor_log(tlog);
 
-
-
     if (nrows == ncols) t.set_square(1); // default 0
     if(geo) t.set_Xcoo(&X);
-
-    if (useEigenLSCG) {
-        VectorXd x = VectorXd::Zero(ncols);
-        VectorXd b = random(nrows,2021);
-        
-        LeastSquaresConjugateGradient<SpMat, LeastSquareDiagonalPreconditioner<double>> lscg;
-        lscg.compute(A);
-
-        LeastSquareDiagonalPreconditioner<double> diag_precond = lscg.preconditioner();
-
-        timer cgls0 = systime();
-        auto iter = lscg_eigen(A, b, x, diag_precond, iterations, residual, true);
-        timer cgls1 = systime();
-
-        cout << "CGLS error: " << scientific <<  (A.transpose()*(A*x-b)).norm() / (A.transpose()*b).norm() << endl;
-        cout << "  CGLS: " << elapsed(cgls0, cgls1) << " s." << endl;
-        cout << "<<<<CGLS=" << iter << endl;
-        return 0;
-    }
-
-    if (useEigenQR){
-        VectorXd x = VectorXd::Zero(ncols);
-        VectorXd b = random(nrows,2021);
-        
-        A.makeCompressed();  
-        SparseQR<SpMat, COLAMDOrdering<int>> eigenQR;
-
-        eigenQR.setPivotThreshold(1e-14);
-        cout << "\n <<<< Using Eigen SparseQR routine..." << endl;
-        timer qr0 = systime();
-        eigenQR.compute(A);
-        timer qr1 = systime();
-        cout << "Time to factorize: " << elapsed(qr0, qr1) << " s." << endl;
-
-        timer qrs0 = systime();
-        x = eigenQR.solve(b);
-        timer qrs1 = systime();
-        cout << "Time to solve: " << elapsed(qrs0, qrs1) << " s." << endl;
-        cout << "Error: " << scientific << (A.transpose()*(A*x-b)).norm() / (A.transpose()*b).norm() << endl; 
-        
-        return 0;
-    }
-
-    if (useCholesky){
-        VectorXd x = VectorXd::Zero(ncols);
-        VectorXd b = random(nrows,2021);
-
-        VectorXd Atb = A.transpose()*b;
-        SpMat AtA = A.transpose()*A;
-        
-        AtA.makeCompressed();
-        SimplicialLLT<SpMat, Lower, AMDOrdering<int> > eigenCholesky;
-        cout << "\n <<<< Using Eigen's SimplicalLL^T routine..." << endl;
-
-        timer qr0 = systime();
-        eigenCholesky.compute(AtA);
-        timer qr1 = systime();
-        cout << "Time to factorize: " << elapsed(qr0, qr1) << " s." << endl;
-
-        timer qrs0 = systime();
-        x = eigenCholesky.solve(Atb);
-        timer qrs1 = systime();
-
-        cout << "Time to solve: " << elapsed(qrs0, qrs1) << " s." << endl;
-        cout << "Error: " << scientific << (A.transpose()*(A*x-b)).norm() / (A.transpose()*b).norm() << endl; 
-        
-        return 0;
-    }
 
     // Partition
     t.partition(A);
     // Setup
     t.assemble(A);
 
+    
     // Factorize
+    MPI_Barrier(MPI_COMM_WORLD);
     int err = t.factorize();
+    MPI_Barrier(MPI_COMM_WORLD);
 
     
     if (!err)
@@ -279,65 +209,82 @@ int main(int argc, char* argv[]){
     {
          // Random b
         {
-            VectorXd b = random(nrows, 2020);
+            VectorXd b = random(nrows, 2021);
             VectorXd bcopy = b;
             VectorXd x(ncols, 1);
             x.setZero();
             timer tsolv_0 = systime();
 
             if (nrows == ncols){
-                t.solve(bcopy, x);
-                timer tsolv = systime();
-                cout << "<<<<tsolv=" << elapsed(tsolv_0, tsolv) << endl;
-                cout << "One-time solve (Random b):" << endl;             
-                cout << "<<<<|(Ax-b)|/|b| : " << scientific <<  ((A*x-b)).norm() / (b).norm() << endl;
+                    t.solve(bcopy, x);
+                    timer tsolv = systime();
+                if (my_rank == 0){
+                    cout << "<<<<tsolv=" << elapsed(tsolv_0, tsolv) << endl;
+                    cout << "One-time solve (Random b):" << endl;             
+                    cout << "<<<<|(Ax-b)|/|b| : " << scientific <<  ((A*x-b)).norm() / (b).norm() << endl;
+                }
             }
             else {
-                t.solve_nrml(A.transpose()*bcopy, x);
+                t.solve(bcopy, x);
                 timer tsolv = systime();
-                cout << "<<<<tsolv=" << elapsed(tsolv_0, tsolv) << endl;
-                cout << "One-time solve (Random b):" << endl;             
-                cout << "<<<<|A'(Ax-b)|/|A'b| : " << scientific <<  (A.transpose()*(A*x-b)).norm() / (A.transpose()*b).norm() << endl;
+                if (my_rank == 0){
+                    cout << "<<<<tsolv=" << elapsed(tsolv_0, tsolv) << endl;
+                    cout << "One-time solve (Random b):" << endl;             
+                    cout << "<<<<|A'(Ax-b)|/|A'b| : " << scientific <<  (A.transpose()*(A*x-b)).norm() / (A.transpose()*b).norm() << endl;
+                }
             }
         }
     }
-
-    // bool verb = true; 
-    // int iter = 0;
-    // if (!err)
-    // {
-    //     VectorXd x = VectorXd::Zero(ncols);
-    //     VectorXd b;
-    //     if ((!result.count("rhs"))){
-    //         b = random(nrows,2021);
-    //     }
-    //     else {
-    //         string rhs_file = result["rhs"].as<string>();
-    //         b = mmio::vector_mmread<double>(rhs_file);
-    //     }
-    //     VectorXd bcopy = b;
+    
+    
+    bool verb = true; 
+    int iter = 0;
+    if (!err)
+    {
+        // VectorXd x = VectorXd::Zero(t.ncols_local());
+        VectorXd x;
+        if ((!result.count("rhs"))){
+            x = random(t.nrows_local(),my_rank+2021);
+        }
+        else {
+            cout << "Reading in RHS not implemented... " << endl;
+            return 1;
+        }
+        // else {
+        //     string rhs_file = result["rhs"].as<string>();
+        //     b = mmio::vector_mmread<double>(rhs_file);
+        // }
+        VectorXd b = x;
 
     
-    //     if(useGMRES) {
-    //         timer gmres0 = systime();
-    //         iter = gmres(A, b, x, t, iterations, iterations, residual, verb);
-    //         timer gmres1 = systime();
-    //         cout << "GMRES: #iterations: " << iter << ", residual |Ax-b|/|b|: " << (A*x-b).norm() / b.norm() << endl;
-    //         cout << "  GMRES: " << elapsed(gmres0, gmres1) << " s." << endl;
-    //         cout << "<<<<GMRES=" << iter << endl;
-    //     }
-    //     else if(useCGLS){
-    //         timer cg0 = systime();
+        if(useGMRES) {
+            timer gmres0 = systime();
+            iter = dist_gmres(A, x, t, iterations, residual, verb);
+            timer gmres1 = systime();
+            const VectorXd Ax = t.spmv(x);
+            const VectorXd r = b - Ax;
+            const double rnorm = VecNorm(r);
+            const double bnorm = VecNorm(b);
+            const double relres = rnorm/bnorm;
+            if (my_rank == 0){
+                cout << "GMRES: #iterations: " << iter << ", residual |Ax-b|/|b|: " << relres << endl;
+                cout << "  GMRES: " << elapsed(gmres0, gmres1) << " s." << endl;
+                cout << "<<<<GMRES=" << iter << endl;
+            }
+        }
+        // else if(useCGLS){
+        //     timer cg0 = systime();
 
-    //         Index max_iters = (long)iterations;
-    //         iter = cgls(A, b, x, t, max_iters, residual, verb);
-    //         cout << "CGLS: #iterations: " << iter << ", residual |A'(Ax-b)|/|A'(b)|: " << (A.transpose()*(A*x-b)).norm() / (A.transpose()*b).norm() << endl;
-    //         timer cg1 = systime();
-    //         cout << "  CGLS: " << elapsed(cg0, cg1) << " s." << endl;
-    //         cout << "<<<<CGLS=" << iter << endl;
-    //     }
-    // }
+        //     Index max_iters = (long)iterations;
+        //     iter = cgls(A, b, x, t, max_iters, residual, verb);
+        //     cout << "CGLS: #iterations: " << iter << ", residual |A'(Ax-b)|/|A'(b)|: " << (A.transpose()*(A*x-b)).norm() / (A.transpose()*b).norm() << endl;
+        //     timer cg1 = systime();
+        //     cout << "  CGLS: " << elapsed(cg0, cg1) << " s." << endl;
+        //     cout << "<<<<CGLS=" << iter << endl;
+        // }
+    }
     
-
-  return 0;  
+    
+    MPI_Finalize();
+    return 0;  
 }

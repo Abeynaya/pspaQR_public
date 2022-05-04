@@ -1,6 +1,7 @@
 #ifndef UTIL_H
 #define UTIL_H
 
+#include "mpi.h"
 #include <iostream>
 #include <stdio.h>
 #include <vector>
@@ -279,7 +280,8 @@ struct matrix_hash : std::unary_function<T, size_t> {
   }
 };
 
-void block2dense(Eigen::VectorXi &rowval, Eigen::VectorXi &colptr, Eigen::VectorXd &nnzval, int i, int j, int li, int lj, Eigen::MatrixXd *dst, bool transpose);
+void block2dense(Eigen::VectorXi &rowval, Eigen::VectorXi &colptr, Eigen::VectorXd &nnzval, int i, int j, int li, int lj, 
+                    Eigen::MatrixXd *dst, SpMat *sp_dst = nullptr, bool transpose = false);
 
 Eigen::MatrixXd linspace_nd(int n, int dim);
 
@@ -303,5 +305,12 @@ std::ostream& operator<<(std::ostream& os, const std::vector<T>& v) {
     os << std::endl;
     return os;
 }
+
+// Code from SU2 by Zan Xu
+Eigen::VectorXd LUSolve(const Eigen::MatrixXd& U, const Eigen::VectorXd& b, int k);
+Eigen::VectorXd MatVec(const Eigen::SparseMatrix<double>& A, const Eigen::VectorXd& x, const std::vector<int>& m_loc);
+Eigen::VectorXd RowMatVec(const Eigen::MatrixXd& A, const Eigen::VectorXd& x);
+double VecNorm(const Eigen::VectorXd& A);
+double VecDot(const Eigen::VectorXd& A, const Eigen::VectorXd& B);
 
 #endif

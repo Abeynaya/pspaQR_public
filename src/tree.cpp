@@ -5,7 +5,7 @@
 #include <iomanip> 
 #include <random>
 #include "tree.h"
-#include "partition.h"
+
 
 using namespace std;
 using namespace Eigen;
@@ -23,12 +23,14 @@ void Tree::set_Xcoo(Eigen::MatrixXd* Xcoo) {this->Xcoo = Xcoo;}
 int Tree::rows() const {return nrows;}
 int Tree::cols() const {return ncols;}
 int Tree::levels() const {return nlevels;}
+int Tree::nparts() const {return n_parts;}
+
 
 tuple<int,int> Tree::topsize() {
     int top_csize = 0;
     int top_rsize = 0; // Number of rows
     for (auto self: this->bottom_current()){
-        if (self->get_level() == this->nlevels-1){
+        if (self->lvl() == this->nlevels-1){
             top_csize += self->cols();
             top_rsize += self->rows();
         }
@@ -414,11 +416,13 @@ void Tree::reassign_rows(Cluster* c){
 void Tree::update_size(Cluster* snew){
     int rsize = 0;
     int csize = 0;
-    for (auto sold: snew->children){
+    
+    for (auto& sold: snew->children){
         sold->rposparent = rsize;
         sold->cposparent = csize;
         rsize += sold->rows();
         csize += sold->cols();
+        for (auto d2c: sold->dist2connxs) if(d2c->lvl() >= this->current_bottom) snew->dist2connxs.insert(d2c->get_parent());
     }
     snew->set_size(rsize, csize); 
     snew->set_org(rsize, csize);
@@ -448,10 +452,10 @@ void Tree::update_edges(Cluster* snew){
     // Allocate memory and create new edges
     for (auto n: snew->cnbrs){
         Edge* e = add_edge(snew, n);
-        if (snew->get_level()> this->ilvl+1 && n->get_level()> this->ilvl+1 && snew != n){
-            snew->add_edge_spars_out(e);
-            n->add_edge_spars_in(e);
-        }
+        // if (snew->lvl()> this->ilvl+1 && n->lvl()> this->ilvl+1 && snew != n){
+        //     snew->add_edge_spars_out(e);
+        //     n->add_edge_spars_in(e);
+        // }
         if (snew==n){
             snew->add_self_edge(e);
         }
@@ -474,7 +478,8 @@ void Tree::update_edges(Cluster* snew){
                 assert(eold->A21->cols() == sold->cols());
 
                 (*found)->A21->block(nold->rposparent, sold->cposparent, nold->rows(), sold->cols()) = *(eold->A21);
-                delete eold; // just makes it a nullptr, so this is safe to do in the loop 
+                delete eold; // only frees the memory
+                eold = nullptr;  // set it to null
             }
             
         }
@@ -588,7 +593,7 @@ void Tree::diagScale(Cluster* c){
 
 /* Sparsify only if left and right neighbors are eliminated */
 bool Tree::want_sparsify(Cluster* c){
-    if (c->get_level() > this->ilvl){
+    if (c->lvl() > this->ilvl){
         SepID left = c->get_id().l;
         SepID right = c->get_id().r;
         if (left.lvl <= this->ilvl && right.lvl <= this->ilvl) 
@@ -627,13 +632,12 @@ void Tree::partition(SpMat& A){
     cperm = VectorXi::LinSpaced(c,0,c-1);
 
     // Apply permutation
-    vector<ClusterID> cpermed(c);
+    this->cpermed = vector<ClusterID>(c);
     initPermutation(nlevels, cmap, cperm); 
     transform(cperm.data(), cperm.data()+cperm.size(), cpermed.begin(), [&cmap](int i){return cmap[i];});
 
     SpMat Ap = col_perm(A, this->cperm);
-    VectorXi c2r_count(c);
-    c2r_count.setZero();
+    this->c2r_count = VectorXi::Zero(c);
     vector<vector<int>> c2r(c);
 
     if (!this->square){
@@ -664,50 +668,55 @@ void Tree::partition(SpMat& A){
         #endif
     }
    
-    /* Set the initial clusters: lvl 0 in cluster heirarchy */
-    int k=0;
-    int l=0;
-    for (; k < c;){
-        int knext = k+1;
-        ClusterID cid = cpermed[k];
-        int nr2c = c2r_count[k];
+    {
+        /* Set the initial clusters: lvl 0 in cluster heirarchy */
+        list<Cluster*> interiors;
+        list<Cluster*> interfaces;
+        list<Cluster*> clusters_all;
 
-        while(knext < c && cid == cpermed[knext]){
-            nr2c += c2r_count[knext];
-            knext++;
-        }
 
-        assert(nr2c != 0);
-        Cluster* self = new Cluster(k, knext-k, l, nr2c, cid, get_new_order());
-        this->bottoms[0].push_back(self);
-        if (cid.level()==0) {
-            interiors[0].push_back(self);
-        }
-        else {
-            interfaces[0].push_back(self);
-        }
-        // To sparsify?
-        if (cid.level()>0 && cid.left().level()<=0 && cid.right().level()<=0){
-            interfaces2sparsify[0].push_back(self);
-        }
-        else if (cid.level()>0){
-            interfaces_no_sparsify[0].push_back(self);
-        }
+        int k=0;
+        int l=0;
+        for (; k < c;){
+            int knext = k+1;
+            ClusterID cid = cpermed[k];
+            int nr2c = c2r_count[k];
 
-        k = knext; 
-        l += nr2c;
+            while(knext < c && cid == cpermed[knext]){
+                nr2c += c2r_count[knext];
+                knext++;
+            }
+
+            assert(nr2c != 0);
+            Cluster* self = new Cluster(k, knext-k, l, nr2c, cid, get_new_order(),0);
+            clusters_all.push_back(self);
+            if (cid.level()==0) {
+                interiors.push_back(self);
+            }
+            else {
+                interfaces.push_back(self);
+            }
+            k = knext; 
+            l += nr2c;
+        }
+        this->bottoms[0].reserve(clusters_all.size()); copy(clusters_all.begin(), clusters_all.end(), this->bottoms[0].begin());
+        this->interiors[0].reserve(interiors.size()); copy(interiors.begin(), interiors.end(), this->interiors[0].begin());
+        this->interfaces[0].reserve(interfaces.size()); copy(interfaces.begin(), interfaces.end(), this->interfaces[0].begin());
+
+
+        assert(l==r);
     }
-
-    assert(l==r);
-
 
     /* Set parent and children and build the cluster heirarchy */
     for (int lvl=1; lvl < nlevels; ++lvl){
-        auto begin = find_if(bottoms[lvl-1].begin(), bottoms[lvl-1].end(), [lvl](const Cluster* s){return s->get_level() >= lvl;});
+        list<Cluster*> interiors;
+        list<Cluster*> interfaces;
+        list<Cluster*> clusters_all;
+        auto begin = find_if(bottoms[lvl-1].begin(), bottoms[lvl-1].end(), [lvl](const Cluster* s){return s->lvl() >= lvl;});
         auto end = bottoms[lvl-1].end();
 
         for(auto self = begin; self != end; self++){
-            assert((*self)->get_level() >= lvl);
+            assert((*self)->lvl() >= lvl);
             auto cid = (*self)->get_id();
             (*self)->set_parentid(merge_if(cid, lvl));
         }
@@ -726,29 +735,27 @@ void Tree::partition(SpMat& A){
                 children_rsize += (*k)->rows();
                 k++;
             }
-            Cluster* parent = new Cluster(children_cstart, children_csize, children_rstart, children_rsize, idparent, get_new_order());
+            Cluster* parent = new Cluster(children_cstart, children_csize, children_rstart, children_rsize, idparent, get_new_order(), lvl);
             // Include parent cluster with all the children
             for (auto c: children){
                 assert(parent != nullptr);
                 c->set_parent(parent); 
                 parent->add_children(c);
             }
+            parent->sort_children(); // I don't know why the order of children are NOT the same in different nodes -- so this is necessary
 
-            bottoms[lvl].push_back(parent);
+            clusters_all.push_back(parent);
             if (idparent.level()== lvl) {
-                interiors[lvl].push_back(parent);
+                interiors.push_back(parent);
             }
             else {
-                interfaces[lvl].push_back(parent);
-            }
-            // To sparsify?
-            if (idparent.level()>lvl && idparent.left().level()<=lvl && idparent.right().level()<=lvl){
-                interfaces2sparsify[lvl].push_back(parent);
-            }
-            else if (idparent.level()>lvl) {
-                interfaces_no_sparsify[lvl].push_back(parent);
+                interfaces.push_back(parent);
             }
         }
+        // Copy to data structures in the tree
+        this->bottoms[lvl].reserve(clusters_all.size()); copy(clusters_all.begin(), clusters_all.end(), this->bottoms[lvl].begin());
+        this->interiors[lvl].reserve(interiors.size()); copy(interiors.begin(), interiors.end(), this->interiors[lvl].begin());
+        this->interfaces[lvl].reserve(interfaces.size()); copy(interfaces.begin(), interfaces.end(), this->interfaces[lvl].begin());
     }
     auto t1 = systime();
     cout << "Time to partition: " << elapsed(t0, t1) << endl;
@@ -794,27 +801,55 @@ void Tree::assemble(SpMat& A){
         for (auto nbr: cnbrs){
             MatrixXd* sA = new MatrixXd(nbr->rows(), self->cols());
             sA->setZero();
-            block2dense(rowval, colptr, nnzval, nbr->get_rstart(), self->get_cstart(), nbr->rows(), self->cols(), sA, false); 
+            block2dense(rowval, colptr, nnzval, nbr->get_rstart(), self->get_cstart(), nbr->rows(), self->cols(), sA, nullptr, false); 
             Edge* e = new Edge(self, nbr, sA);
             self->add_edgeOut(e);
 
             if (self != nbr){
                 nbr->add_edgeIn(e);
+                if (self->lvl()==0) nbr->col_interior_deps++;
             }
             else {
                 //self == nbr
                 self->add_self_edge(e);
             }
 
-            if (self->get_level()>0 && nbr->get_level()>0 && self != nbr){
-                self->add_edge_spars_out(e);
-                nbr->add_edge_spars_in(e);
-            }
+            // if (self->lvl()>0 && nbr->lvl()>0 && self != nbr){
+            //     self->add_edge_spars_out(e);
+            //     nbr->add_edge_spars_in(e);
+            // }
         }
 
         self->sort_edgesOut();
         self->cnbrs = cnbrs;
     }
+
+    // prepare fill-in
+    { // ONLY original distance two connections
+        // On ALL RANKS FOR ALL CLUSTERS
+        SpMat AtA = App.transpose()*App; 
+        AtA.makeCompressed();
+        vector<bool> visited(this->bottoms[0].size(),false);
+
+        for (auto& self: bottom_original()){ // at the leaf level
+            for (int col=self->get_cstart(); col < self->get_cstart()+self->cols(); ++col){
+                for (SpMat::InnerIterator it(AtA,col); it; ++it){
+                    int row = it.row(); 
+                    Cluster* possible_nbr = cmap[row];
+                    if (!visited[possible_nbr->get_order()]){
+                        if (possible_nbr->lvl()>= self->lvl() && possible_nbr != self) self->dist2connxs.insert(possible_nbr);
+                        else if (possible_nbr->lvl() < self->lvl()) {
+                            self->dist2connxs.insert(possible_nbr->dist2connxs.begin(), possible_nbr->dist2connxs.end());
+                        } 
+                        visited[possible_nbr->get_order()] = true;
+                    }
+                }
+            }
+            fill(visited.begin(), visited.end(), false);
+        } 
+    }
+
+    
     auto aend = systime();
     cout << "Time to assemble: " << elapsed(astart, aend)  << endl;
     cout << "Aspect ratio of top separator: " << (double)get<0>(topsize())/(double)get<1>(topsize()) << endl;
@@ -876,41 +911,14 @@ int Tree::eliminate_cluster(Cluster* c){
     return 0;
 }
 
+// New version of get_sparsity that uses edgesIn -- Feb 10, 2022
 void Tree::get_sparsity(Cluster* c){
-    set<Cluster*> row_sparsity;
-    set<SepID> col_sparsity;
-
-    for (auto edge: c->edgesOut){
-        assert(edge->A21 != nullptr);
-        col_sparsity.insert(edge->n2->get_sepID());
+    unordered_set<Cluster*> row_sparsity;
+    row_sparsity.insert(c->dist2connxs.begin(), c->dist2connxs.end());
+    for (auto edge: c->edgesIn){
+        row_sparsity.insert(edge->n1);
     }
-    bool geo = (this->Xcoo != nullptr);
-    double eps = 1e-14;
-
-    for (auto edge: c->edgesOut){
-        assert(edge->A21 != nullptr); 
-        Cluster* n = edge->n2;
-        if (n!= c) row_sparsity.insert(n);
-        for (auto ein: n->edgesIn){
-            if (ein->n1 != c && !ein->n1->is_eliminated()){
-                assert(ein->A21 != nullptr);
-
-                Cluster* nin = ein->n1;
-                bool valid = true;
-                
-                valid = check_if_valid(c->get_id(), nin->get_id(), col_sparsity);
-                if (!geo && valid && 
-                    !(nin->get_id().l == c->get_sepID() || nin->get_id().r == c->get_sepID()) ) {
-                    valid = ((*(edge->A21)).transpose()*(*(ein->A21))).norm() > eps;                                    
-                }
-                
-                if (valid) {
-                    row_sparsity.insert(nin);
-                }
-            }
-        }        
-    }
-    c->rsparsity = row_sparsity; 
+    c->rsparsity = row_sparsity;
 }
 
 void Tree::merge_all(){
@@ -1007,7 +1015,7 @@ void Tree::sparsify(Cluster* c){
     int cf_csize = c->cols()-rank;
     int cf_rstart = c->get_rstart() + c->rows()- cf_csize;
     int cf_rsize = cf_csize;
-    Cluster * cf = new Cluster(cf_cstart, cf_csize, cf_rstart, cf_rsize, c->get_id(), get_new_order());
+    Cluster * cf = new Cluster(cf_cstart, cf_csize, cf_rstart, cf_rsize, c->get_id(), get_new_order(), this->ilvl);
 
     this->ops.push_back(new Split(c,cf));
     if (!this->square) this->tops.push_back(new tSplit(c,cf));
@@ -1114,7 +1122,7 @@ void Tree::sparsifyD(Cluster* c){
     int cf_csize = c->cols()-rank;
     int cf_rstart = c->get_rstart() + c->cols() - cf_csize;
     int cf_rsize = cf_csize;
-    Cluster * cf = new Cluster(cf_cstart, cf_csize, cf_rstart, cf_rsize, c->get_id(), get_new_order());
+    Cluster * cf = new Cluster(cf_cstart, cf_csize, cf_rstart, cf_rsize, c->get_id(), get_new_order(), this->ilvl);
 
     
     this->ops.push_back(new SplitD(c, cf, rank));
@@ -1234,7 +1242,7 @@ void Tree::sparsifyD_imp(Cluster* c){
     int cf_csize = c->cols()-rank;
     int cf_rstart = c->get_rstart() + c->cols()- cf_csize;
     int cf_rsize = cf_csize;
-    Cluster * cf = new Cluster(cf_cstart, cf_csize, cf_rstart, cf_rsize, c->get_id(), get_new_order());
+    Cluster * cf = new Cluster(cf_cstart, cf_csize, cf_rstart, cf_rsize, c->get_id(), get_new_order(), this->ilvl);
 
     
     this->ops.push_back(new SplitD(c, cf, rank));
@@ -1305,6 +1313,7 @@ void Tree::sparsify_extra(Cluster* c){
     if (c->cols() == 0) return;
     if (c->rows() <= c->cols()) return;
     // do_scaling before calling this function -- will not work otherwise
+    assert(this->scale == 1);
     vector<MatrixXd*> Apm;
 
     int spm=0;
@@ -1357,7 +1366,7 @@ int Tree::factorize(){
         auto vstart = systime();
         {
             for (auto self: this->bottom_current()){
-                if (self->get_level() == this->ilvl){
+                if (self->lvl() == this->ilvl){
                     this->get_sparsity(self);
                 }
             }
@@ -1368,7 +1377,7 @@ int Tree::factorize(){
         // Eliminate
         {      
             for (auto self: this->bottom_current()){
-                if (self->get_level() == this->ilvl){
+                if (self->lvl() == this->ilvl){
                     assert(self->is_eliminated() == false);
                     auto elmn0 = systime();
                     this->eliminate_cluster(self);
@@ -1388,7 +1397,7 @@ int Tree::factorize(){
             if (this->ilvl < nlevels-1){
                 for (auto self: this->bottom_current()){
                     if (self->is_eliminated() && !(this->square)){
-                        assert(self->get_level() == this->ilvl);
+                        assert(self->lvl() == this->ilvl);
                         this->reassign_rows(self);
                     }
                 }
@@ -1568,7 +1577,7 @@ Tree:: ~Tree(){
 
     for(int lvl = 0; lvl < this->nlevels; lvl++) {
         for(auto s : bottoms[lvl]){
-            if (s->get_level() == lvl){
+            if (s->lvl() == lvl){
                 for(auto e : s->edgesOut) {
                     delete e;
                 }
