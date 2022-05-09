@@ -65,6 +65,8 @@ private:
 	int local_cols;
 	int local_rows;
 
+	std::mutex profile_mutex; 
+
 	/* Helper */
 	bool want_sparsify(Cluster*) const;
 	Cluster* get_interior(int) const; // given order return the cluster
@@ -115,7 +117,8 @@ private:
 	void merge_bwd(Cluster*) const;
 
 
-
+	// For profiling
+	void add_ranks_before_after(Cluster*);
 public: 
 	void set_nthreads(int);
 	void set_verbose(int);

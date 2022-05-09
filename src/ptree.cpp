@@ -90,6 +90,12 @@ int ParTree::edge2rank(Edge* e) const {
     return cluster2rank(e->n1);
 }
 
+void ParTree::add_ranks_before_after(Cluster* c){
+    std::lock_guard<std::mutex> lock(profile_mutex);
+    this->profile.rank_before[this->ilvl-skip][nlevels-c->lvl()-1].push_back(c->cols());
+    this->profile.rank_after[this->ilvl-skip][nlevels-c->lvl()-1].push_back(c->get_rank());
+}
+
 /* Add an edge between c1 and c2
  such that A(c2, c1) block is non-zero */
 Edge* ParTree::new_edgeOut(Cluster* c1, Cluster* c2){
@@ -424,7 +430,7 @@ void ParTree::sparsify_rrqr_only(Cluster* c){
     c->set_tau_sp(h); 
     c->set_T_sp(T);
     c->set_rank(rank); 
-
+    this->add_ranks_before_after(c);
     // Change size of pivot block
     if (square){ // only if square (otherwise we fulfill a different task)
         *(e_self->A21) = MatrixXd::Identity(rank, rank);
@@ -2119,6 +2125,8 @@ int ParTree::factorize(){
                  <<  blas_threads << ", " << ttor_threads << ")  " 
             //      << "a.r top_sep: " << (double)get<0>(topsize())/(double)get<1>(topsize()) 
                  << endl;
+
+            // profile.write_iqr_rank();
         }
         
 
@@ -2129,6 +2137,7 @@ int ParTree::factorize(){
         cout << "Tolerance set: " << scientific << this->tol << endl;
         cout << "Time to factorize:  " << elapsed(fstart,fend) << endl;
     }
+    profile.write_ranks();
     
 
 	return 0;
