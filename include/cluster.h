@@ -217,6 +217,7 @@ public:
     std::list<Edge*> edgesInNbrSparsification;
 
     /* Solution to A' xt=b */
+    std::vector<int> order_of_trans;
     Eigen::VectorXd* xt = nullptr; // A'xt = b
     /* Solution to linear system*/
     Eigen::VectorXd* x = nullptr; // Ax = b
