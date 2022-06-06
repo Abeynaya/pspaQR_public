@@ -121,6 +121,8 @@ target_link_libraries(spaQR
         spaQR_lib
 )
 
+add_subdirectory(tests)
+
 ### Build speedups
 find_program(CCACHE_PROGRAM ccache)
 if(CCACHE_PROGRAM)
