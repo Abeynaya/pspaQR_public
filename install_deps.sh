@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # Set-up dependencies
-mkdir ${HOME}/Softwares
-cd ${HOME}/Softwares
+mkdir ${HOME}/sSoftwares
+cd ${HOME}/sSoftwares
 
 # Get ttor
 echo '>>> Cloning TTor repo'
-git clone https://github.com/Abeynaya/tasktorrent.git
+git clone https://github.com/leopoldcambier/tasktorrent.git
 
 # Get eigen 
 echo '>>> Downlading Eigen-3.3.9'
@@ -14,6 +14,11 @@ wget https://gitlab.com/libeigen/eigen/-/archive/3.3.9/eigen-3.3.9.tar.gz
 tar -xvf eigen-3.3.9.tar.gz
 rm eigen-3.3.9.tar.gz
 mv eigen-3.3.9/ eigen
+cd eigen
+mkdir build
+cd build
+cmake .. -DCMAKE_INSTALL_PREFIX=.
+cd ../..
 
 # Get metis
 echo '>>> Downlading metis-5.1.0'

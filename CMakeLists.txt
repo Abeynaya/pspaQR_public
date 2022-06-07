@@ -10,9 +10,6 @@ option(SPAQR_USE_MKL "Build with MKL" ON)
 option(SPAQR_USE_METIS "Build with METIS" ON)
 option(SPAQR_USE_HSL "Build with HSL" OFF)
 
-### Add TaskTorrent
-add_subdirectory(${TASKTORRENT_ROOT_DIR} ${CMAKE_BINARY_DIR}/ttor)
-
 ### Find dependencies
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 
@@ -31,7 +28,7 @@ find_package(BLAS REQUIRED)
 find_package(LAPACKE REQUIRED)
 
 ### EIGEN
-set(ENV{EIGEN3_ROOT_DIR} ${SOFTROOT}/eigen)
+set(EIGEN3_INCLUDE_DIR ${SOFTROOT}/eigen)
 find_package(Eigen3 3.3 REQUIRED)
 add_definitions(-DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE) 
 if(SPAQR_USE_MKL)
@@ -60,6 +57,9 @@ else()
     add_compile_options(-O3 -Wall -Wno-unused-variable -mtune=native -march=native -fomit-frame-pointer -funroll-loops -ffast-math)
     add_definitions(-DEIGEN_NO_DEBUG -DNDEBUG)
 endif()
+
+### Add TaskTorrent
+add_subdirectory(${TASKTORRENT_ROOT_DIR} ${CMAKE_BINARY_DIR}/ttor)
 
 # METIS AND HSL
 if(SPAQR_USE_METIS)
