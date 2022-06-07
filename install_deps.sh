@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Set-up dependencies
-mkdir ${HOME}/sSoftwares
-cd ${HOME}/sSoftwares
+mkdir ${HOME}/Softwares
+cd ${HOME}/Softwares
 
 # Get ttor
 echo '>>> Cloning TTor repo'
