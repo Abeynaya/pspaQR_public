@@ -41,6 +41,7 @@ public:
 	/* SEPARATOR DETAILS */
 	/* Output mean, median, quartile data */
 	void write_ranks();
+	void write_ranks_after();
 	void write_mean_rank_per_interface();
 	void write_minmax_rank_per_interface();
 	void write_neighbors();

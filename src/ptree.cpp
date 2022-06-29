@@ -2147,7 +2147,7 @@ int ParTree::factorize(){
         cout << "Tolerance set: " << scientific << this->tol << endl;
         cout << "Time to factorize:  " << elapsed(fstart,fend) << endl;
     }
-    profile.write_ranks();
+    profile.write_ranks_after();
     profile.write_minmax_rank_per_interface();
 
     

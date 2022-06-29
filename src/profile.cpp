@@ -40,7 +40,7 @@ void Profile::write_telmn(){
 /* INTERFACE DETAILS */
 // Mean, Median, quartiles per interface per level of sparsification
 void Profile::write_ranks(){
-	cout << "Mean, Median and quartiles of ranks per interface per level of sparsification" << endl;
+	cout << "Mean, Median and quartiles of ranks per interface per level of sparsification (before spars. at that level)" << endl;
 	cout << "Level      Mean 	  " << "Q1 	  	" << "Q2/ Median 	 " << "Q3 " << endl;
 	cout << "\n----------------------------------" << endl ;
 
@@ -64,6 +64,34 @@ void Profile::write_ranks(){
 	}
 	cout << "\n----------------------------------" << endl ;
 }
+
+// Mean, Median, quartiles per interface per level of sparsification
+void Profile::write_ranks_after(){
+	cout << "Mean, Median and quartiles of ranks per interface per level of sparsification (after spars. at that level)" << endl;
+	cout << "Level      Mean 	  " << "Q1 	  	" << "Q2/ Median 	 " << "Q3 " << endl;
+	cout << "\n----------------------------------" << endl ;
+
+	int L = nlevels-skip-1;
+
+	for (int i= 0; i < L; ++i){
+		cout << L-i;
+		vector<unsigned long int> ranks_per_level; 
+
+		for (int j=0; j < L-i; ++j){
+			auto v = rank_after[i][j]; 
+			ranks_per_level.insert(ranks_per_level.end(), v.begin(), v.end());	
+		}
+		stable_sort(ranks_per_level.begin(), ranks_per_level.end());
+		if (ranks_per_level.size() >0){
+			cout << "       " << (unsigned long int)(accumulate(ranks_per_level.begin(), ranks_per_level.end(), 0.0)/ranks_per_level.size());
+			cout << "  		" << (unsigned long int)quant(ranks_per_level,0.25); 
+			cout << "  		" << (unsigned long int)quant(ranks_per_level,0.5); 
+			cout << "  		" << (unsigned long int)quant(ranks_per_level,0.75) << endl; 
+		}
+	}
+	cout << "\n----------------------------------" << endl ;
+}
+
 
 // Mean rank per interface per level of sparsification (before, after, total before, total after)
 void Profile::write_mean_rank_per_interface(){
