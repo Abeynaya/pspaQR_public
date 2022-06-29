@@ -42,6 +42,7 @@ public:
 	/* Output mean, median, quartile data */
 	void write_ranks();
 	void write_mean_rank_per_interface();
+	void write_minmax_rank_per_interface();
 	void write_neighbors();
 	
 	void write_mean_tss(); // both spars and scale

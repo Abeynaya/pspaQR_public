@@ -102,6 +102,42 @@ void Profile::write_mean_rank_per_interface(){
 	cout << "\n----------------------------------" << endl ;	
 }
 
+void Profile::write_minmax_rank_per_interface(){
+	cout << "Min and max rank per interface per level of sparsification" << endl;
+
+	cout << " Lvl| Min Rk bfr | Min Rk aft | Max Rk bfr | Max Rk aft" << endl;
+	cout << "\n----------------------------------" << endl ;
+
+	int L = nlevels-skip-1;
+
+
+	for (int i= 0; i < L; ++i){
+		cout << L-i;
+		auto bf_minmax = minmax_element(rank_before[i][0].begin(), rank_before[i][0].end());
+		auto af_minmax = minmax_element(rank_after[i][0].begin(), rank_after[i][0].end());
+
+		auto bf_min = *(bf_minmax.first);
+		auto bf_max = *(bf_minmax.second);
+		auto af_min = *(af_minmax.first);
+		auto af_max = *(af_minmax.second);
+
+		for (int j=1; j < L-i; ++j){
+			auto v = rank_before[i][j];
+			auto a = rank_after[i][j];
+			bf_minmax = minmax_element(rank_before[i][j].begin(), rank_before[i][j].end());
+			af_minmax = minmax_element(rank_after[i][j].begin(), rank_after[i][j].end());
+
+			bf_min = bf_min < *(bf_minmax.first) ? bf_min : *(bf_minmax.first);
+			bf_max = bf_max > *(bf_minmax.second) ? bf_max : *(bf_minmax.second);
+			af_min = af_min < *(af_minmax.first) ? af_min : *(af_minmax.first);
+			af_max = af_max > *(af_minmax.second) ? af_max : *(af_minmax.second);
+		}
+			cout << "   | " << (int)(bf_min) << "     | " << (int) (af_min) 
+		    << "     | " << (int)(bf_max) << "     | " << (int) (af_max) << endl;
+ 	}
+	cout << "\n----------------------------------" << endl ;	
+}
+
 // Mean, Median, quartiles of neighbors per interface per level of sparsification
 void Profile::write_neighbors(){
 	cout << "Mean, Median and quartiles of neighbors of an interface interface per level of sparsification" << endl;

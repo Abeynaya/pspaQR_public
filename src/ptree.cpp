@@ -2138,7 +2138,7 @@ int ParTree::factorize(){
 
             // profile.write_iqr_rank();
         }
-        
+
 
         
     }
@@ -2148,6 +2148,8 @@ int ParTree::factorize(){
         cout << "Time to factorize:  " << elapsed(fstart,fend) << endl;
     }
     profile.write_ranks();
+    profile.write_minmax_rank_per_interface();
+
     
 
 	return 0;
