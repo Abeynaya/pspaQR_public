@@ -28,6 +28,7 @@ find_package(BLAS REQUIRED)
 find_package(LAPACKE REQUIRED)
 
 ### EIGEN
+set(EIGEN3_ROOT_DIR ${SOFTROOT}/eigen)
 set(EIGEN3_INCLUDE_DIR ${SOFTROOT}/eigen)
 find_package(Eigen3 3.3 REQUIRED)
 add_definitions(-DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE) 
