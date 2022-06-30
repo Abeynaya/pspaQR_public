@@ -2146,12 +2146,10 @@ int ParTree::factorize(){
     if (my_rank == 0){
         cout << "Tolerance set: " << scientific << this->tol << endl;
         cout << "Time to factorize:  " << elapsed(fstart,fend) << endl;
+        // profile.write_ranks_after();
+        // profile.write_minmax_rank_per_interface();
     }
-    profile.write_ranks_after();
-    profile.write_minmax_rank_per_interface();
-
     
-
 	return 0;
 }
 
